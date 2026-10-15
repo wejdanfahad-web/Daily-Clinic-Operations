@@ -976,7 +976,7 @@ PAGES.inventory = async function renderInventory(app) {
   const pickClinic = (c) => { INV.clinic = c; INV.data = null; history.replaceState(null, '', '#/inventory/' + c); S.param = String(c); render(); };
 
   app.appendChild(h('div', { class: 'page-title' }, h('h2', null, 'Clinic inventory'),
-    h('span', { class: 'note' }, 'Machines (with Serial # and PPM dates) and instruments (quantities) in each clinic. Staff keep their own clinic up to date.')));
+    h('span', { class: 'note' }, 'Machines (with Serial #; PPM dates for the dental chair, X-ray unit and microscope) and instruments (quantities) in each clinic. Staff keep their own clinic up to date.')));
 
   const grid = h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(118px, 1fr))', gap: '8px' } });
   for (const s of summary) {
@@ -999,8 +999,8 @@ PAGES.inventory = async function renderInventory(app) {
       h('td', { class: 'name' }, it.item_name, it.list_status === 'PENDING' ? h('span', { class: 'status new', style: { marginLeft: '6px' }, title: 'Typed under Other… — waiting for the CIC' }, 'new name') : null),
       h('td', { style: { fontFamily: 'var(--mono)', fontSize: '12px' } }, it.item_kind === 'MACHINE' ? (it.serial_no || '—') : ''),
       h('td', { class: 'score' }, it.item_kind === 'MACHINE' ? '' : it.quantity),
-      h('td', null, it.last_ppm_date ? fmtDay(it.last_ppm_date) + ' ' + it.last_ppm_date.slice(0, 4) : (it.item_kind === 'MACHINE' ? '—' : '')),
-      h('td', null, it.ppm_due_date ? fmtDay(it.ppm_due_date) + ' ' + it.ppm_due_date.slice(0, 4) : (it.item_kind === 'MACHINE' ? '—' : '')),
+      h('td', null, it.requires_ppm !== 'Y' ? '' : it.last_ppm_date ? fmtDay(it.last_ppm_date) + ' ' + it.last_ppm_date.slice(0, 4) : '—'),
+      h('td', null, it.requires_ppm !== 'Y' ? '' : it.ppm_due_date ? fmtDay(it.ppm_due_date) + ' ' + it.ppm_due_date.slice(0, 4) : '—'),
       h('td', null, p[0] ? h('span', { class: 'status ' + p[1] }, p[0]) : null, it.condition_status !== 'IN_SERVICE' ? h('span', { class: 'status new', style: { marginLeft: '4px' } }, it.condition_status.replace(/_/g, ' ').toLowerCase()) : null),
       h('td', { class: 'note' }, it.last_verified_by_name ? `${it.last_verified_by_name} · ${it.last_verified_on || ''}` : '—'),
       h('td', null, editable ? h('div', { style: { display: 'flex', gap: '6px' } },
@@ -1016,6 +1016,7 @@ PAGES.inventory = async function renderInventory(app) {
 
   if (editable) app.appendChild(addItemCard(catalog));
   if (isCic()) app.appendChild(standardListCard(catalog, INV.data.pending || []));
+  if (isCic()) app.appendChild(importSheetCard());
 };
 
 function addItemCard(catalog) {
@@ -1031,23 +1032,36 @@ function addItemCard(catalog) {
   const due = h('input', { class: 'in', type: 'date' });
   const qty = h('input', { class: 'in', type: 'number', min: 0, max: 9999, value: 1 });
   const notes = h('input', { class: 'in', maxlength: 200, placeholder: 'Optional' });
-  const machineOnly = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-    h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Serial # *', serial), h('label', { class: 'f' }, 'Asset tag (biomedical)', tag)),
+  const otherPpm = h('input', { type: 'checkbox' });
+  const otherPpmLabel = h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px' } }, otherPpm, 'This machine has a PPM due date');
+  const ppmBox = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
     h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Last PPM date', last), h('label', { class: 'f' }, 'PPM interval', interval)),
     h('label', { class: 'f' }, 'Next PPM due (if not using the interval)', due));
+  const machineOnly = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+    h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Serial # *', serial), h('label', { class: 'f' }, 'Asset tag / DUH #', tag)),
+    otherPpmLabel, ppmBox);
+  const needsPpm = () => {
+    if (kind !== 'MACHINE') return false;
+    if (pick.value === 'OTHER') return otherPpm.checked;
+    const c = catalog.find((x) => String(x.item_id) === pick.value);
+    return !!(c && c.requires_ppm === 'Y');
+  };
+  const syncPpm = () => { otherPpmLabel.hidden = pick.value !== 'OTHER'; ppmBox.hidden = !needsPpm(); };
+  otherPpm.addEventListener('change', syncPpm);
   const instrumentOnly = h('label', { class: 'f' }, 'Quantity', qty);
   const fillList = () => {
     pick.textContent = '';
     const list = catalog.filter((c) => c.item_kind === kind);
     pick.append(h('option', { value: '' }, list.length ? 'Choose…' : 'No list yet — choose Other…'),
       ...list.map((c) => h('option', { value: c.item_id }, c.item_name)), h('option', { value: 'OTHER' }, 'Other…'));
-    otherLabel.hidden = true; other.value = '';
+    otherLabel.hidden = true; other.value = ''; otherPpm.checked = false; syncPpm();
   };
   pick.addEventListener('change', () => {
     otherLabel.hidden = pick.value !== 'OTHER';
     if (pick.value === 'OTHER') other.focus();
     const c = catalog.find((x) => String(x.item_id) === pick.value);
     if (c && c.ppm_interval_months) interval.value = c.ppm_interval_months;
+    syncPpm();
   });
   const segBtns = [['MACHINE', 'Machine'], ['INSTRUMENT', 'Instrument']].map(([k, l]) => h('button', { type: 'button', 'aria-pressed': k === kind ? 'true' : 'false', onclick: () => {
     kind = k; segBtns.forEach((b, i) => b.setAttribute('aria-pressed', ['MACHINE', 'INSTRUMENT'][i] === k ? 'true' : 'false'));
@@ -1064,7 +1078,8 @@ function addItemCard(catalog) {
     save.disabled = true;
     try {
       await api('inventory', { method: 'POST', body: kind === 'MACHINE'
-        ? { action: 'add', clinic_id: INV.clinic, item_kind: kind, ...item, serial_no: serial.value, asset_tag: tag.value, last_ppm_date: last.value || null, ppm_interval_months: interval.value || null, ppm_due_date: due.value || null, notes: notes.value }
+        ? { action: 'add', clinic_id: INV.clinic, item_kind: kind, ...item, serial_no: serial.value, asset_tag: tag.value, notes: notes.value, requires_ppm: needsPpm() ? 'Y' : 'N',
+            ...(needsPpm() ? { last_ppm_date: last.value || null, ppm_interval_months: interval.value || null, ppm_due_date: due.value || null } : {}) }
         : { action: 'add', clinic_id: INV.clinic, item_kind: kind, ...item, quantity: Number(qty.value), notes: notes.value } });
       toast(pick.value === 'OTHER' ? 'Added. The CIC will check the new name.' : 'Added.'); INV.data = null; render();
     } catch (e) { show(e.message); save.disabled = false; }
@@ -1100,7 +1115,9 @@ function standardListCard(catalog, pending) {
     const list = catalog.filter((c) => c.item_kind === k);
     card.appendChild(h('div', null, h('b', { style: { fontSize: '13px' } }, `${label} (${list.length})`),
       h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' } }, list.length ? list.map((c) => h('span', { class: 'chip', style: { background: '#F3F4F1', borderColor: '#DDE1DC' } },
-        c.item_name, c.ppm_interval_months ? h('span', { class: 'cat' }, `PPM ${c.ppm_interval_months}m`) : null,
+        c.item_name, k === 'MACHINE' ? h('button', { type: 'button', class: 'cat', title: c.requires_ppm === 'Y' ? 'Has a PPM due date (click to turn off)' : 'No PPM (click to turn on)',
+          'aria-label': `${c.item_name}: PPM ${c.requires_ppm === 'Y' ? 'on' : 'off'}`, style: { border: 0, cursor: 'pointer', opacity: c.requires_ppm === 'Y' ? 1 : 0.45 },
+          onclick: () => post({ action: 'catalog_ppm', item_id: c.item_id, requires_ppm: c.requires_ppm === 'Y' ? 'N' : 'Y' }) }, c.requires_ppm === 'Y' ? `PPM${c.ppm_interval_months ? ' ' + c.ppm_interval_months + 'm' : ''}` : 'no PPM') : null,
         h('button', { type: 'button', 'aria-label': `Remove ${c.item_name} from the list`, style: { border: 0, background: 'transparent', cursor: 'pointer', fontWeight: 700 },
           onclick: () => confirm(`Remove "${c.item_name}" from the dropdown? Items already in clinics keep their name.`) && post({ action: 'catalog_remove', item_id: c.item_id }) }, '×')))
         : h('span', { class: 'note' }, 'Empty'))));
@@ -1108,9 +1125,9 @@ function standardListCard(catalog, pending) {
 
   const nk = h('select', { class: 'in', style: { width: 'auto' } }, h('option', { value: 'MACHINE' }, 'Machine'), h('option', { value: 'INSTRUMENT' }, 'Instrument'));
   const nn = h('input', { class: 'in', maxlength: 120, placeholder: 'Item name, spelled exactly as it should appear' });
-  const ni = h('select', { class: 'in', style: { width: 'auto' } }, h('option', { value: '' }, 'PPM: not set'), [3, 6, 12, 24].map((m) => h('option', { value: m }, `PPM every ${m} months`)));
+  const ni = h('select', { class: 'in', style: { width: 'auto' } }, h('option', { value: '' }, 'No PPM'), [3, 6, 12, 24].map((m) => h('option', { value: m }, `PPM every ${m} months`)));
   card.appendChild(h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' } }, nk, h('div', { style: { flex: '1 1 260px' } }, nn), ni,
-    h('button', { type: 'button', class: 'btn small dark', onclick: () => nn.value.trim() && post({ action: 'catalog_add', item_kind: nk.value, item_name: nn.value, ppm_interval_months: nk.value === 'MACHINE' && ni.value ? Number(ni.value) : null }, 'Added to the list.') }, 'Add to list')));
+    h('button', { type: 'button', class: 'btn small dark', onclick: () => nn.value.trim() && post({ action: 'catalog_add', item_kind: nk.value, item_name: nn.value, requires_ppm: nk.value === 'MACHINE' && ni.value ? 'Y' : 'N', ppm_interval_months: nk.value === 'MACHINE' && ni.value ? Number(ni.value) : null }, 'Added to the list.') }, 'Add to list')));
 
   // one-click load of the department list shipped with the website
   const loadBtn = h('button', { type: 'button', class: 'btn small', hidden: true, onclick: async () => {
@@ -1129,6 +1146,7 @@ function standardListCard(catalog, pending) {
 
 function editItem(it) {
   const machine = it.item_kind === 'MACHINE';
+  const ppm = machine && it.requires_ppm === 'Y';
   openDialog((body, close) => {
     const err = h('div', { class: 'msg bad', hidden: true, role: 'alert' });
     const serial = h('input', { class: 'in', value: it.serial_no || '', maxlength: 60 });
@@ -1141,8 +1159,8 @@ function editItem(it) {
     const notes = h('input', { class: 'in', value: it.notes || '', maxlength: 200 });
     body.append(h('h3', null, `${it.item_name} · Clinic ${it.clinic_id}`),
       machine ? h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Serial # *', serial), h('label', { class: 'f' }, 'Asset tag', tag)) : h('label', { class: 'f' }, 'Quantity', qty),
-      machine ? h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Last PPM date', last), h('label', { class: 'f' }, 'Next PPM due', due)) : null,
-      machine ? h('div', { class: 'hint' }, 'Change the last PPM date and leave "next due" as it is: the due date is recalculated from the interval when one is set.') : null,
+      ppm ? h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Last PPM date', last), h('label', { class: 'f' }, 'Next PPM due', due)) : null,
+      ppm ? h('div', { class: 'hint' }, 'Change the last PPM date and leave "next due" as it is: the due date is recalculated from the interval when one is set.') : null,
       h('label', { class: 'f' }, 'Status', status), h('label', { class: 'f' }, 'Notes', notes), err,
       h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn', onclick: close }, 'Cancel'),
         h('button', { type: 'button', class: 'btn dark', onclick: async () => {
@@ -1150,11 +1168,158 @@ function editItem(it) {
           const bodyData = { action: 'update', equipment_id: it.equipment_id, condition_status: status.value, notes: notes.value };
           if (machine) {
             bodyData.serial_no = serial.value; bodyData.asset_tag = tag.value;
-            if (last.value !== (it.last_ppm_date || '')) bodyData.last_ppm_date = last.value || null;
-            if (due.value !== (it.ppm_due_date || '')) bodyData.ppm_due_date = due.value || null;
+            if (ppm && last.value !== (it.last_ppm_date || '')) bodyData.last_ppm_date = last.value || null;
+            if (ppm && due.value !== (it.ppm_due_date || '')) bodyData.ppm_due_date = due.value || null;
           } else bodyData.quantity = Number(qty.value);
           try { await api('inventory', { method: 'POST', body: bodyData }); close(); toast('Updated.'); INV.data = null; render(); }
           catch (e) { err.textContent = e.message; err.hidden = false; }
         } }, 'Save')));
   });
+}
+
+// ---------- CIC: import machines from the department's Excel sheets (.xlsx, read in the browser)
+async function readXlsx(file) {
+  if (!window.JSZip) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js');
+  const zip = await window.JSZip.loadAsync(await file.arrayBuffer());
+  const xml = async (p) => { const f = zip.file(p); return f ? new DOMParser().parseFromString(await f.async('string'), 'application/xml') : null; };
+  const strings = [];
+  const ss = await xml('xl/sharedStrings.xml');
+  if (ss) for (const si of ss.getElementsByTagName('si')) strings.push([...si.getElementsByTagName('t')].map((t) => t.textContent).join(''));
+  const wb = await xml('xl/workbook.xml');
+  const rels = await xml('xl/_rels/workbook.xml.rels');
+  const target = {};
+  if (rels) for (const r of rels.getElementsByTagName('Relationship')) target[r.getAttribute('Id')] = r.getAttribute('Target');
+  const sheets = [];
+  for (const s of wb.getElementsByTagName('sheet')) {
+    const rid = s.getAttribute('r:id') || s.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
+    let path = target[rid] || '';
+    path = path.startsWith('/') ? path.slice(1) : 'xl/' + path.replace(/^\.\//, '');
+    const doc = await xml(path);
+    if (!doc) continue;
+    const rows = [];
+    for (const row of doc.getElementsByTagName('row')) {
+      const out = [];
+      for (const c of row.getElementsByTagName('c')) {
+        const ref = c.getAttribute('r') || '';
+        const letters = (ref.match(/^[A-Z]+/) || ['A'])[0];
+        let col = 0; for (const ch of letters) col = col * 26 + (ch.charCodeAt(0) - 64);
+        const t = c.getAttribute('t');
+        const v = c.getElementsByTagName('v')[0];
+        let val = null;
+        if (t === 's') val = v ? strings[Number(v.textContent)] : null;
+        else if (t === 'inlineStr') val = [...c.getElementsByTagName('t')].map((x) => x.textContent).join('');
+        else if (v) val = t === 'str' || t === 'b' ? v.textContent : Number(v.textContent);
+        out[col - 1] = val;
+      }
+      rows.push(out);
+    }
+    sheets.push({ name: s.getAttribute('name'), rows });
+  }
+  return sheets;
+}
+
+const MONTH_NO = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+function sheetDate(v) {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'number') { // Excel day number
+    if (v < 20000 || v > 80000) return null;
+    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 10);
+  }
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/^(\d{1,2})\s*([A-Za-z]{3})[A-Za-z]*\.?\s*(\d{2}|\d{4})$/);
+  if (m && MONTH_NO[m[2].toLowerCase()]) {
+    const y = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+    return `${y}-${String(MONTH_NO[m[2].toLowerCase()]).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`;
+  }
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  return null;
+}
+const MASTER_NAMES = { 'DENTAL UNIT': 'Dental Chair', 'DENTAL CHAIR': 'Dental Chair', 'XRAY UNIT': 'X-ray Unit', 'X-RAY UNIT': 'X-ray Unit', 'X RAY UNIT': 'X-ray Unit', MICROSCOPE: 'Microscope' };
+const titleCase = (s) => String(s).trim().toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+const clinicNo = (v) => { const m = String(v ?? '').match(/(\d{1,3})/); return m ? Number(m[1]) : null; };
+const cellText = (v) => (v === null || v === undefined ? '' : String(v).trim());
+
+// Two layouts are understood: the staff tracker (Item name · Type · Serial No. · Status · Location/Clinic No.)
+// and the department master list (ITEM · LOCATION · MODEL/TYPE · DUH # · SERIAL # · PPM DATE · PPM DUE DATE).
+function machinesFromSheets(sheets) {
+  const out = [];
+  for (const sh of sheets) {
+    let hi = -1, head = [];
+    for (let i = 0; i < Math.min(sh.rows.length, 15); i++) {
+      const r = (sh.rows[i] || []).map((x) => cellText(x).toLowerCase());
+      if (r.some((x) => x.includes('serial')) && r.some((x) => x.includes('location') || x.includes('clinic'))) { hi = i; head = r; break; }
+    }
+    if (hi < 0) continue;
+    const col = (...keys) => head.findIndex((x) => keys.some((k) => x === k || x.startsWith(k)));
+    const cSerial = col('serial'), cLoc = col('location', 'clinic'), cStatus = col('status');
+    const isMaster = col('ppm due') >= 0 || col('duh') >= 0;
+    if (isMaster) {
+      const cItem = col('item'), cTag = col('duh'), cLast = col('ppm date'), cDue = col('ppm due');
+      let item = '';
+      for (const r of sh.rows.slice(hi + 1)) {
+        if (!r) continue;
+        if (cellText(r[cItem])) item = cellText(r[cItem]);
+        const c = clinicNo(r[cLoc]);
+        if (!item || !c) continue;
+        out.push({ clinic_id: c, item_name: MASTER_NAMES[item.toUpperCase()] || titleCase(item), serial_no: cellText(r[cSerial]) || null,
+          asset_tag: cellText(r[cTag]) || null, status: 'Functioning', last_ppm_date: sheetDate(r[cLast]), ppm_due_date: sheetDate(r[cDue]), sheet: sh.name });
+      }
+    } else {
+      const cType = col('type'), cName = col('item name', 'item');
+      for (const r of sh.rows.slice(hi + 1)) {
+        if (!r) continue;
+        const c = clinicNo(r[cLoc]);
+        const name = cellText(r[cType]) || titleCase(cellText(r[cName]));
+        if (!c || !name) continue;
+        out.push({ clinic_id: c, item_name: name, serial_no: cellText(r[cSerial]) || null, asset_tag: null,
+          status: cellText(r[cStatus]) || 'Functioning', last_ppm_date: null, ppm_due_date: null, sheet: sh.name });
+      }
+    }
+  }
+  return out;
+}
+
+function importSheetCard() {
+  const card = h('details', { class: 'card pad', 'aria-label': 'Import inventory sheet' },
+    h('summary', { style: { cursor: 'pointer', fontWeight: 600, fontSize: '16px' } }, 'Import machines from Excel'));
+  const file = h('input', { type: 'file', accept: '.xlsx', class: 'in', style: { padding: '8px' } });
+  const out = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } });
+  card.append(h('div', { class: 'hint' }, 'Upload the Endo inventory tracker or the equipment master list (.xlsx). Machines are matched by item and Serial #, so importing the same file again updates instead of duplicating. PPM dates are kept only for the dental chair, X-ray unit and microscope.'),
+    h('label', { class: 'f' }, 'Excel file', file), out);
+  file.addEventListener('change', async () => {
+    out.textContent = '';
+    if (!file.files[0]) return;
+    out.appendChild(h('div', { class: 'note' }, 'Reading…'));
+    let rows;
+    try { rows = machinesFromSheets(await readXlsx(file.files[0])); }
+    catch (e) { out.textContent = ''; out.appendChild(h('div', { class: 'msg bad' }, 'Could not read this file. Save it as .xlsx and try again.')); return; }
+    out.textContent = '';
+    if (!rows.length) { out.appendChild(h('div', { class: 'msg bad' }, 'No machines found. The sheet needs a header row with Serial and Location/Clinic columns.')); return; }
+    const active = new Set(S.ref.clinics.map((c) => Number(c.clinic_id)));
+    const use = rows.filter((r) => active.has(r.clinic_id));
+    const skip = rows.length - use.length;
+    const byItem = {};
+    for (const r of use) byItem[r.item_name] = (byItem[r.item_name] || 0) + 1;
+    const today = TODAY();
+    const overdue = use.filter((r) => r.ppm_due_date && r.ppm_due_date < today).length;
+    const noSerial = use.filter((r) => !r.serial_no).length;
+    out.append(
+      h('div', null, h('b', null, `${use.length} machines found`), ` in ${new Set(use.map((r) => r.clinic_id)).size} clinics`,
+        skip ? h('span', { class: 'note' }, ` · ${skip} skipped (clinic not in use: ${[...new Set(rows.filter((r) => !active.has(r.clinic_id)).map((r) => 'Cl ' + r.clinic_id))].join(', ')})`) : null),
+      h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } }, Object.entries(byItem).sort((a, b) => b[1] - a[1]).map(([n, k]) => h('span', { class: 'chip', style: { background: '#F3F4F1' } }, n, h('span', { class: 'cat' }, String(k))))),
+      overdue ? h('div', { class: 'msg bad' }, `${overdue} of these already have a PPM due date in the past. After import they show as "PPM overdue" and the clinic staff get a notification at 7:30 AM.`) : null,
+      noSerial ? h('div', { class: 'note' }, `${noSerial} machine${noSerial === 1 ? ' has' : 's have'} no Serial # in the sheet; staff can add it with Update.`) : null);
+    const go = h('button', { type: 'button', class: 'btn dark', onclick: async () => {
+      go.disabled = true; go.textContent = 'Importing…';
+      try {
+        const r = await api('inventory', { method: 'POST', body: { action: 'import', rows: use.map(({ sheet, ...x }) => x) } });
+        toast(`Imported ${r.saved} machines.`); INV.data = null; render();
+      } catch (e) { toast(e.message); go.disabled = false; go.textContent = `Import ${use.length} machines`; }
+    } }, `Import ${use.length} machines`);
+    out.appendChild(h('div', null, go));
+  });
+  return card;
 }

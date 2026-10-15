@@ -10,7 +10,10 @@
 //   { action: "verify", equipment_id }    "still correct" — stamps who checked and when
 // Item names come from a standard list (dropdown). "Other…" saves a typed name as PENDING; the CIC
 // then adds it to the list or links it to an existing item. CIC list actions:
-//   { action: "catalog_add", item_kind, item_name, ppm_interval_months }
+//   { action: "catalog_add", item_kind, item_name, requires_ppm, ppm_interval_months }
+//   { action: "catalog_ppm", item_id, requires_ppm }      machine has a PPM due date (Y/N)
+//   { action: "import", rows: [{ clinic_id, item_name, serial_no, asset_tag, status, last_ppm_date, ppm_due_date }] }
+//       machines from the department's Excel sheets (read in the browser); matched by item + Serial #
 //   { action: "catalog_bulk", items: [{ item_kind, item_name, ppm_interval_months }] }
 //   { action: "catalog_remove", item_id }            (existing clinic items keep their name)
 //   { action: "catalog_approve", item_id }           PENDING → STANDARD
@@ -63,7 +66,7 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
           FROM clinics c LEFT JOIN v_equipment_status e ON e.clinic_id = c.clinic_id
          WHERE c.is_active = 'Y'
          GROUP BY c.clinic_id ORDER BY c.clinic_id`),
-      query(`SELECT item_id, item_name, item_kind, ppm_interval_months FROM equipment_catalog
+      query(`SELECT item_id, item_name, item_kind, requires_ppm, ppm_interval_months FROM equipment_catalog
               WHERE is_active = 'Y' AND list_status = 'STANDARD' AND item_kind IN ('MACHINE', 'INSTRUMENT')
               ORDER BY item_kind, UPPER(item_name)`),
     ]);
@@ -88,17 +91,19 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
       const name = clean(it.item_name, 120);
       if (!KINDS.includes(kind) || !name) throw new HttpError(400, 'Each item needs a type (Machine/Instrument) and a name.');
       const intv = it.ppm_interval_months ? Number(it.ppm_interval_months) : null;
+      const ppm = kind !== 'MACHINE' ? 'N' : it.requires_ppm === undefined || it.requires_ppm === null ? null : (it.requires_ppm === true || it.requires_ppm === 'Y' ? 'Y' : 'N');
       await exec(`
         BEGIN
           MERGE INTO equipment_catalog t
           USING (SELECT :nm AS item_name, :kind AS item_kind FROM dual) s
              ON (UPPER(t.item_name) = UPPER(s.item_name) AND t.item_kind = s.item_kind)
           WHEN MATCHED THEN UPDATE SET list_status = 'STANDARD', is_active = 'Y', item_name = s.item_name,
+                                       requires_ppm = NVL(:ppm, requires_ppm),
                                        ppm_interval_months = NVL(:intv, ppm_interval_months), updated_at = SYSTIMESTAMP
           WHEN NOT MATCHED THEN INSERT (item_name, item_kind, requires_ppm, ppm_interval_months, list_status)
-                                VALUES (s.item_name, s.item_kind, CASE WHEN s.item_kind = 'MACHINE' THEN 'Y' ELSE 'N' END, :intv, 'STANDARD');
+                                VALUES (s.item_name, s.item_kind, NVL(:ppm, 'N'), :intv, 'STANDARD');
           COMMIT;
-        END;`, { nm: name, kind, intv });
+        END;`, { nm: name, kind, intv, ppm });
     };
     if (b.action === 'catalog_add') { await addOne(b); return json(200, { ok: true }); }
     if (b.action === 'catalog_bulk') {
@@ -108,6 +113,11 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
     }
     const itemId = Number(b.item_id);
     if (!itemId) throw new HttpError(400, 'item_id is required.');
+    if (b.action === 'catalog_ppm') {
+      await exec(`BEGIN UPDATE equipment_catalog SET requires_ppm = :p, updated_at = SYSTIMESTAMP WHERE item_id = :id AND item_kind = 'MACHINE'; COMMIT; END;`,
+        { p: b.requires_ppm === true || b.requires_ppm === 'Y' ? 'Y' : 'N', id: itemId });
+      return json(200, { ok: true });
+    }
     if (b.action === 'catalog_remove') {
       await exec(`BEGIN UPDATE equipment_catalog SET list_status = 'REMOVED', updated_at = SYSTIMESTAMP WHERE item_id = :id; COMMIT; END;`, { id: itemId });
       return json(200, { ok: true });
@@ -128,6 +138,66 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
       return json(200, { ok: true });
     }
     throw new HttpError(400, 'Unknown action.');
+  }
+
+  // ---- CIC: import machines from the department's Excel sheets (parsed in the browser)
+  if (b.action === 'import') {
+    if (!isCic) throw new HttpError(403, 'Only the CIC can import the inventory sheet.');
+    if (!Array.isArray(b.rows) || !b.rows.length) throw new HttpError(400, 'No machines to import.');
+    if (b.rows.length > 1500) throw new HttpError(400, 'Too many rows (max 1500).');
+    const STAT = { FUNCTIONING: 'IN_SERVICE', 'NON-FUNCTIONING': 'OUT_OF_SERVICE', 'NON FUNCTIONING': 'OUT_OF_SERVICE', 'UNDER REPAIR': 'UNDER_REPAIR' };
+    const rows = [];
+    b.rows.forEach((r, i) => {
+      const cid = Number(r.clinic_id);
+      const name = clean(r.item_name, 120);
+      if (!Number.isInteger(cid) || cid < 1 || cid > 999 || !name) throw new HttpError(400, `Row ${i + 1}: clinic and item name are required.`);
+      rows.push({ c: cid, n: name, s: clean(r.serial_no, 60), t: clean(r.asset_tag, 40),
+        st: STAT[String(r.status || 'Functioning').trim().toUpperCase()] || 'IN_SERVICE',
+        lp: optDate(r.last_ppm_date, `Row ${i + 1}: last PPM date`), due: optDate(r.ppm_due_date, `Row ${i + 1}: PPM due date`) });
+    });
+    const active = new Set((await query(`SELECT clinic_id FROM clinics WHERE is_active = 'Y'`)).map((r) => Number(r.clinic_id)));
+    const skipped = [...new Set(rows.filter((r) => !active.has(r.c)).map((r) => r.c))];
+    await exec(`
+DECLARE
+  l_item NUMBER; l_eq NUMBER;
+BEGIN
+  FOR r IN (SELECT j.c, j.n, j.s, j.t, j.st, j.lp, j.due
+              FROM JSON_TABLE(:js, '$[*]' COLUMNS (c NUMBER PATH '$.c', n VARCHAR2(120) PATH '$.n', s VARCHAR2(60) PATH '$.s',
+                     t VARCHAR2(40) PATH '$.t', st VARCHAR2(15) PATH '$.st', lp VARCHAR2(10) PATH '$.lp', due VARCHAR2(10) PATH '$.due')) j
+             WHERE EXISTS (SELECT 1 FROM clinics k WHERE k.clinic_id = j.c AND k.is_active = 'Y')) LOOP
+    BEGIN
+      SELECT item_id INTO l_item FROM equipment_catalog
+       WHERE UPPER(item_name) = UPPER(r.n) AND item_kind = 'MACHINE' AND list_status <> 'REMOVED' AND ROWNUM = 1;
+    EXCEPTION WHEN NO_DATA_FOUND THEN
+      INSERT INTO equipment_catalog (item_name, item_kind, requires_ppm, list_status)
+      VALUES (r.n, 'MACHINE', CASE WHEN r.due IS NOT NULL THEN 'Y' ELSE 'N' END, 'STANDARD')
+      RETURNING item_id INTO l_item;
+    END;
+    l_eq := NULL;
+    BEGIN
+      IF r.s IS NOT NULL THEN
+        SELECT equipment_id INTO l_eq FROM equipment_ppm
+         WHERE item_id = l_item AND UPPER(serial_no) = UPPER(r.s) AND condition_status <> 'RETIRED' AND ROWNUM = 1;
+      ELSE
+        SELECT equipment_id INTO l_eq FROM equipment_ppm
+         WHERE item_id = l_item AND clinic_id = r.c AND serial_no IS NULL AND condition_status <> 'RETIRED' AND ROWNUM = 1;
+      END IF;
+    EXCEPTION WHEN NO_DATA_FOUND THEN l_eq := NULL;
+    END;
+    IF l_eq IS NULL THEN
+      INSERT INTO equipment_ppm (clinic_id, item_id, asset_tag, serial_no, quantity, condition_status, last_ppm_date, ppm_due_date, updated_by, notes)
+      VALUES (r.c, l_item, r.t, r.s, 1, r.st, TO_DATE(r.lp, 'YYYY-MM-DD'), TO_DATE(r.due, 'YYYY-MM-DD'), :by, 'Imported from the inventory sheet');
+    ELSE
+      UPDATE equipment_ppm
+         SET clinic_id = r.c, asset_tag = NVL(r.t, asset_tag), condition_status = r.st,
+             last_ppm_date = NVL(TO_DATE(r.lp, 'YYYY-MM-DD'), last_ppm_date),
+             ppm_due_date  = NVL(TO_DATE(r.due, 'YYYY-MM-DD'), ppm_due_date), updated_by = :by
+       WHERE equipment_id = l_eq;
+    END IF;
+  END LOOP;
+  COMMIT;
+END;`, { js: JSON.stringify(rows), by });
+    return json(200, { ok: true, saved: rows.filter((r) => active.has(r.c)).length, skipped_clinics: skipped });
   }
 
   if (b.action === 'add') {
@@ -164,7 +234,7 @@ BEGIN
        WHERE UPPER(item_name) = UPPER(:nm) AND item_kind = :kind AND list_status <> 'REMOVED' AND ROWNUM = 1;
     EXCEPTION WHEN NO_DATA_FOUND THEN
       INSERT INTO equipment_catalog (item_name, item_kind, requires_ppm, ppm_interval_months, list_status)
-      VALUES (:nm, :kind, CASE WHEN :kind = 'MACHINE' THEN 'Y' ELSE 'N' END, :intv, 'PENDING')
+      VALUES (:nm, :kind, CASE WHEN :kind = 'MACHINE' AND :ppm = 'Y' THEN 'Y' ELSE 'N' END, :intv, 'PENDING')
       RETURNING item_id INTO l_item;
     END;
   END IF;
@@ -178,7 +248,7 @@ BEGIN
           :sid, SYSTIMESTAMP, :by, :notes);
   COMMIT;
 END;`, {
-      kind, lid: listId, ser: serial, nm: name, intv: kind === 'MACHINE' ? interval : null, cid, tag: kind === 'MACHINE' ? clean(b.asset_tag, 40) : null, qty,
+      kind, lid: listId, ser: serial, nm: name, ppm: b.requires_ppm === true || b.requires_ppm === 'Y' ? 'Y' : 'N', intv: kind === 'MACHINE' ? interval : null, cid, tag: kind === 'MACHINE' ? clean(b.asset_tag, 40) : null, qty,
       lp: kind === 'MACHINE' ? optDate(b.last_ppm_date, 'Last PPM date') : null,
       due: kind === 'MACHINE' ? optDate(b.ppm_due_date, 'PPM due date') : null,
       sid: user.sid, by, notes: clean(b.notes, 400),

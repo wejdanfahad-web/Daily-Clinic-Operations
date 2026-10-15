@@ -1,4 +1,85 @@
 {
-  "note": "The department's standard list of machines and instruments. The CIC loads it into the dropdown with one click (Clinic inventory → Standard list).",
-  "items": []
+  "note": "The department's standard list of machines and instruments (machines from the Endo inventory tracker, Oct 2026). Only the dental chair, X-ray unit and microscope have a PPM due date. Applied automatically; the CIC can also load it with one click (Clinic inventory \u2192 Standard list).",
+  "items": [
+    {
+      "item_kind": "MACHINE",
+      "item_name": "Dental Chair",
+      "requires_ppm": "Y"
+    },
+    {
+      "item_kind": "MACHINE",
+      "item_name": "X-ray Unit",
+      "requires_ppm": "Y"
+    },
+    {
+      "item_kind": "MACHINE",
+      "item_name": "Microscope",
+      "requires_ppm": "Y"
+    },
+    {
+      "item_kind": "MACHINE",
+      "item_name": "X Smart Plus",
+      "requires_ppm": "N"
+    },
+    {
+      "item_kind": "MACHINE",
+      "item_name": "X Smart Plus Handpiece",
+      "requires_ppm": "N"
+    },
+    {
+      "item_kind": "MACHINE",
+      "item_name": "Apex Locator",
+      "requires_ppm": "N"
+    },
+    {
+      "item_kind": "MACHINE",
+      "item_name": "Beta Gun",
+      "requires_ppm": "N"
+    },
+    {
+      "item_kind": "MACHINE",
+      "item_name": "Beta Charging Stand",
+      "requires_ppm": "N"
+    },
+    {
+      "item_kind": "MACHINE",
+      "item_name": "Alpha",
+      "requires_ppm": "N"
+    },
+    {
+      "item_kind": "MACHINE",
+      "item_name": "Amalgamator",
+      "requires_ppm": "N"
+    },
+    {
+      "item_kind": "MACHINE",
+      "item_name": "Adult Sensor",
+      "requires_ppm": "N"
+    },
+    {
+      "item_kind": "MACHINE",
+      "item_name": "PEDO Sensor",
+      "requires_ppm": "N"
+    },
+    {
+      "item_kind": "MACHINE",
+      "item_name": "P5 Ultrasonic",
+      "requires_ppm": "N"
+    },
+    {
+      "item_kind": "MACHINE",
+      "item_name": "Wireless Light Cure",
+      "requires_ppm": "N"
+    },
+    {
+      "item_kind": "MACHINE",
+      "item_name": "Wired Light Cure",
+      "requires_ppm": "N"
+    },
+    {
+      "item_kind": "MACHINE",
+      "item_name": "Intraoral Camera",
+      "requires_ppm": "N"
+    }
+  ]
 }

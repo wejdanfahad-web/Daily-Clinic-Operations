@@ -10,6 +10,32 @@ const STEPS = [
     done: `SELECT COUNT(*) AS n FROM user_tab_columns WHERE table_name = 'EQUIPMENT_CATALOG' AND column_name = 'LIST_STATUS'`,
     run: `BEGIN EXECUTE IMMEDIATE 'ALTER TABLE equipment_catalog ADD (list_status VARCHAR2(10) DEFAULT ''STANDARD'' NOT NULL)'; END;`,
   },
+  {
+    id: '08_department_machine_list',
+    // The department's standard machine list (Endo inventory tracker, Oct 2026).
+    // Only the dental chair, X-ray unit and microscope have a PPM due date.
+    done: `SELECT COUNT(*) AS n FROM equipment_catalog WHERE UPPER(item_name) = 'MICROSCOPE' AND item_kind = 'MACHINE' AND requires_ppm = 'Y' AND list_status = 'STANDARD'`,
+    run: `
+DECLARE
+  TYPE t_names IS TABLE OF VARCHAR2(60);
+  l_all t_names := t_names('Dental Chair', 'X-ray Unit', 'Microscope', 'X Smart Plus', 'X Smart Plus Handpiece', 'Apex Locator',
+                           'Beta Gun', 'Beta Charging Stand', 'Alpha', 'Amalgamator', 'Adult Sensor', 'PEDO Sensor',
+                           'P5 Ultrasonic', 'Wireless Light Cure', 'Wired Light Cure', 'Intraoral Camera');
+BEGIN
+  FOR i IN 1 .. l_all.COUNT LOOP
+    MERGE INTO equipment_catalog t
+    USING (SELECT l_all(i) AS item_name FROM dual) s
+       ON (UPPER(t.item_name) = UPPER(s.item_name) AND t.item_kind = 'MACHINE')
+    WHEN MATCHED THEN UPDATE SET list_status = 'STANDARD', is_active = 'Y', item_name = s.item_name, updated_at = SYSTIMESTAMP
+    WHEN NOT MATCHED THEN INSERT (item_name, item_kind, requires_ppm, list_status) VALUES (s.item_name, 'MACHINE', 'N', 'STANDARD');
+  END LOOP;
+  UPDATE equipment_catalog
+     SET requires_ppm = CASE WHEN UPPER(item_name) IN ('DENTAL CHAIR', 'X-RAY UNIT', 'MICROSCOPE') THEN 'Y' ELSE 'N' END,
+         updated_at = SYSTIMESTAMP
+   WHERE item_kind = 'MACHINE';
+  COMMIT;
+END;`,
+  },
 ];
 
 let ready = null;

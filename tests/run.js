@@ -441,6 +441,27 @@ function ev(method, { body, query, cookie } = {}) {
     assert.strictEqual(JSON.parse(r.body).added, 2);
   });
 
+  await t('inventory: department machine list applied once; Excel import is CIC-only, skips unused clinics', async () => {
+    let listed = false;
+    require('../netlify/functions/lib/migrate')._reset();
+    responder = (sql) => /user_tab_columns/.test(sql) ? rows([{ N: 1 }]) : /UPPER\(item_name\) = 'MICROSCOPE'/.test(sql) ? rows([{ N: listed ? 1 : 0 }])
+      : /'Dental Chair', 'X-ray Unit', 'Microscope'/.test(sql) ? ((listed = true), done()) : /FROM clinics WHERE is_active/.test(sql) ? rows([{ CLINIC_ID: 2 }, { CLINIC_ID: 9 }]) : done();
+    const rowsIn = [{ clinic_id: 9, item_name: 'Microscope', serial_no: '6722300863', asset_tag: '80615', last_ppm_date: '2026-01-01', ppm_due_date: '2027-01-01' },
+      { clinic_id: 1, item_name: 'Dental Chair', serial_no: 'UPMS709628' }, { clinic_id: 2, item_name: 'Beta Gun', serial_no: 'BG1', status: 'Non-functioning' }];
+    let r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'import', rows: rowsIn } }));
+    assert.strictEqual(r.statusCode, 403);
+    assert(listed, 'machine list step ran');
+    calls.length = 0;
+    r = await F('inventory')(ev('POST', { cookie: cic, body: { action: 'import', rows: rowsIn } }));
+    assert.strictEqual(r.statusCode, 200, r.body);
+    const out = JSON.parse(r.body);
+    assert.strictEqual(out.saved, 2); assert.deepStrictEqual(out.skipped_clinics, [1]);
+    assert(!calls.some((c) => /'Dental Chair', 'X-ray Unit'/.test(c.statementText)), 'list step runs once');
+    const blk = calls.find((c) => /JSON_TABLE/.test(c.statementText));
+    const js = JSON.parse(blk.binds.find((b) => b.name === 'js').value);
+    assert.strictEqual(js[2].st, 'OUT_OF_SERVICE'); assert.strictEqual(js[0].due, '2027-01-01');
+  });
+
   await t('wrong HTTP method → 405', async () => {
     const r = await F('login')(ev('GET'));
     assert.strictEqual(r.statusCode, 405);
