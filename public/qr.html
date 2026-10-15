@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ENDO Ops · Get the app</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;600;700&family=IBM+Plex+Sans+Arabic:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root { --ink: #17262B; --muted: #4F5D5A; --line: #DDE1DC; --brand: #16302F; --bg: #F3F4F1; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 40px; }
+  .sheet { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 28px; display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 28px; align-items: start; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+  header img { width: 44px; height: 44px; }
+  h1 { margin: 0; font-size: 24px; }
+  .sub { color: var(--muted); font-size: 14px; }
+  #qr { background: #fff; padding: 14px; border: 1px solid var(--line); border-radius: 12px; display: inline-block; }
+  #qr img, #qr canvas { display: block; width: 260px !important; height: 260px !important; }
+  .url { font-family: 'IBM Plex Mono', monospace; font-size: 13px; word-break: break-all; margin-top: 10px; color: var(--muted); }
+  h2 { font-size: 16px; margin: 0 0 8px; }
+  ol { margin: 0 0 18px; padding-left: 20px; line-height: 1.55; font-size: 14px; }
+  .ar { font-family: 'IBM Plex Sans Arabic', sans-serif; direction: rtl; text-align: right; font-size: 14px; line-height: 1.7; color: var(--ink); border-top: 1px solid var(--line); padding-top: 12px; }
+  .note { font-size: 12px; color: var(--muted); }
+  .actions { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+  button, a.btn { min-height: 44px; padding: 0 16px; border-radius: 8px; border: 1px solid #C9CFC9; background: #fff; color: var(--ink); font: inherit; font-size: 14px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
+  button.dark { background: var(--brand); color: #fff; border-color: var(--brand); }
+  @media (max-width: 680px) { .sheet { grid-template-columns: 1fr; padding: 20px; } #qr img, #qr canvas { width: 220px !important; height: 220px !important; } }
+  @media print { body { background: #fff; } main { padding: 0; } .actions { display: none; } .sheet { border: 0; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="/icon-192.png" alt="">
+    <div>
+      <h1>ENDO Clinic Operations</h1>
+      <div class="sub">Scan to put the app on your phone and get your assignment alerts</div>
+    </div>
+  </header>
+  <div class="sheet">
+    <div>
+      <div id="qr" role="img" aria-label="QR code for the ENDO Clinic Operations app"></div>
+      <div class="url" id="url"></div>
+      <div class="note" style="margin-top:8px">Open the phone camera and point it at the code.</div>
+    </div>
+    <div>
+      <h2>iPhone (Safari)</h2>
+      <ol>
+        <li>Scan the code and open the link in <b>Safari</b>.</li>
+        <li>Tap <b>Share</b> (square with an arrow), then <b>Add to Home Screen</b>, then <b>Add</b>.</li>
+        <li>Open <b>ENDO Ops</b> from your home screen and sign in with your staff ID.</li>
+        <li>Tap <b>Turn on notifications</b> and choose <b>Allow</b>.</li>
+      </ol>
+      <h2>Android (Chrome)</h2>
+      <ol>
+        <li>Scan the code and open the link in <b>Chrome</b>.</li>
+        <li>Tap <b>Install</b> when it appears, or <b>⋮</b> menu, then <b>Install app</b> / <b>Add to Home screen</b>.</li>
+        <li>Open <b>ENDO Ops</b> and sign in with your staff ID.</li>
+        <li>Tap <b>Turn on notifications</b> and choose <b>Allow</b>.</li>
+      </ol>
+      <div class="ar">
+        <b>للآيفون:</b> فتح الرابط في Safari ← زر المشاركة ← «إضافة إلى الشاشة الرئيسية» ← فتح التطبيق وتسجيل الدخول ← «تفعيل الإشعارات».<br>
+        <b>للأندرويد:</b> فتح الرابط في Chrome ← «تثبيت التطبيق» ← فتح التطبيق وتسجيل الدخول ← «تفعيل الإشعارات».
+      </div>
+      <div class="note" style="margin-top:10px">Notifications arrive between 7:30 AM and 4:30 PM only. iPhone needs iOS 16.4 or newer.</div>
+    </div>
+  </div>
+  <div class="actions">
+    <button type="button" class="dark" onclick="window.print()">Print this page</button>
+    <a class="btn" href="/">Back to the app</a>
+  </div>
+</main>
+<script>
+  var url = location.origin + '/';
+  document.getElementById('url').textContent = url;
+  try { new QRCode(document.getElementById('qr'), { text: url, width: 520, height: 520, correctLevel: QRCode.CorrectLevel.M }); }
+  catch (e) { document.getElementById('qr').textContent = 'QR code could not load. Share this link instead: ' + url; }
+</script>
+</body>
+</html>

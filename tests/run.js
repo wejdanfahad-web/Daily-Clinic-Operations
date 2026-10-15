@@ -500,6 +500,20 @@ function ev(method, { body, query, cookie } = {}) {
     assert.match(blk.statementText, /'PENDING'/);
   });
 
+  await t('push test: nothing leaves the server in quiet hours', async () => {
+    const push = require('../netlify/functions/lib/push');
+    push._setClock(() => new Date('2026-10-15T21:30:00Z')); // 00:30 Riyadh
+    calls.length = 0;
+    let r = await F('push-test')(ev('POST', { cookie: cic }));
+    assert.strictEqual(JSON.parse(r.body).status, 'QUIET_HOURS');
+    assert.strictEqual(calls.length, 0, 'no database or push calls');
+    push._setClock(() => new Date('2026-10-18T06:00:00Z')); // 09:00 Riyadh
+    responder = () => rows([]);
+    r = await F('push-test')(ev('POST', { cookie: cic }));
+    assert.strictEqual(JSON.parse(r.body).status, 'SKIPPED_NO_DEVICE');
+    push._setClock(null);
+  });
+
   await t('wrong HTTP method → 405', async () => {
     const r = await F('login')(ev('GET'));
     assert.strictEqual(r.statusCode, 405);

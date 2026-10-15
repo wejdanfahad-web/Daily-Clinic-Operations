@@ -126,4 +126,4 @@ async function notifyCic(message) {
   return out;
 }
 
-module.exports = { notifyStaff, notifyCic, logNotification, flushPending, isQuietTime, riyadhClock, _setClock };
+module.exports = { notifyStaff, notifyCic, logNotification, flushPending, isQuietTime, riyadhClock, sendToDevices, _setClock };

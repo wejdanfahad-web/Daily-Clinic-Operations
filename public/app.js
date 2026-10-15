@@ -605,7 +605,14 @@ function notifyCard() {
   const card = h('section', { class: 'card pad', 'aria-label': 'Phone notifications' }, h('h2', null, 'Phone notifications'));
   const status = h('div', { class: 'note' });
   const btn = h('button', { type: 'button', class: 'btn primary', onclick: enablePush }, 'Turn on notifications');
-  card.append(status, btn);
+  const test = h('button', { type: 'button', class: 'btn small', hidden: true, onclick: testPush }, 'Send me a test');
+  const install = h('button', { type: 'button', class: 'btn small', hidden: !INSTALL.prompt, onclick: async () => {
+    if (!INSTALL.prompt) return;
+    INSTALL.prompt.prompt(); await INSTALL.prompt.userChoice.catch(() => null); INSTALL.prompt = null; install.hidden = true;
+  } }, 'Install the app on this phone');
+  INSTALL.onReady = () => { install.hidden = false; };
+  card.append(status, h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, btn, test, install),
+    isCic() ? h('a', { href: '/qr.html', target: '_blank', rel: 'noopener', class: 'note', style: { color: '#1F5145' } }, 'QR code to put the app on staff phones →') : null);
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
   const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
@@ -616,6 +623,7 @@ function notifyCard() {
     status.textContent = 'You get alerts for your assignments, schedule changes and PPM reminders on this device.';
     btn.textContent = 'Re-register this device';
     btn.className = 'btn small';
+    test.hidden = false;
   } else if (Notification.permission === 'denied') {
     status.textContent = 'Notifications are blocked for this site. Allow them in your browser settings, then reload.';
     btn.hidden = true;
@@ -623,6 +631,25 @@ function notifyCard() {
     status.textContent = 'Get alerts for your assignments, schedule changes and PPM reminders.';
   }
   return card;
+}
+
+// Android/Chrome: keep the install prompt so the app can offer an "Install" button
+const INSTALL = { prompt: null, onReady: null };
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); INSTALL.prompt = e; if (INSTALL.onReady) INSTALL.onReady(); });
+
+async function testPush() {
+  try {
+    const r = await api('push-test', { method: 'POST' });
+    if (r.status === 'SENT') return toast('Test sent. It should appear on this phone in a few seconds.');
+    if (r.status === 'QUIET_HOURS') {
+      // no notifications leave the server 16:30–07:30; show one from this phone instead
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg) await reg.showNotification('ENDO Clinic · test', { body: 'This phone can show ENDO notifications. Real alerts are sent 7:30 AM–4:30 PM.', icon: '/icon-192.png' });
+      return toast('Quiet hours (4:30 PM–7:30 AM): showed a test from this phone only. Try again after 7:30 AM for a real one.');
+    }
+    if (r.status === 'SKIPPED_NO_DEVICE') return toast('This device is not registered yet. Tap "Turn on notifications" first.');
+    toast('The test could not be delivered. Tap "Re-register this device" and try again.');
+  } catch (e) { toast(e.message); }
 }
 
 function b64ToUint8(b64) {
