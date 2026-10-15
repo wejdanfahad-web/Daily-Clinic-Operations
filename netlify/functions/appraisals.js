@@ -1,14 +1,45 @@
 // Annual appraisal progress.
-// GET  /api/appraisals?year=2026   CIC: everyone · staff: only their own row
+// The cycle restarts automatically every 30 January: from 30 Jan the new year's cycle is shown,
+// with the previous year's steps copied over (deadlines moved one year on). Until 29 Jan the
+// previous cycle stays current so late steps can still be completed. Past years stay viewable.
+// GET  /api/appraisals[?year=2026] CIC: everyone · staff: only their own row
 // POST /api/appraisals { staff_id, year, step_no, done: true }   CIC
 const { query, exec } = require('./lib/db');
 const { handler, json, parseBody, HttpError, requireUser, requireCic, riyadhToday } = require('./lib/http');
 
+// Appraisal cycle year for a Riyadh date: a new cycle starts on 30 January.
+function cycleYear(today) {
+  const y = Number(today.slice(0, 4));
+  return today.slice(5) >= '01-30' ? y : y - 1;
+}
+
+async function ensureCycle(year) {
+  await exec(`
+    DECLARE
+      l_n   NUMBER;
+      l_src NUMBER;
+    BEGIN
+      SELECT COUNT(*) INTO l_n FROM appraisal_steps WHERE appraisal_year = :y;
+      IF l_n = 0 THEN
+        SELECT MAX(appraisal_year) INTO l_src FROM appraisal_steps WHERE appraisal_year < :y;
+        IF l_src IS NOT NULL THEN
+          INSERT INTO appraisal_steps (appraisal_year, step_no, step_name, due_date)
+          SELECT :y, step_no, step_name, ADD_MONTHS(due_date, 12 * (:y - l_src))
+            FROM appraisal_steps WHERE appraisal_year = l_src;
+          COMMIT;
+        END IF;
+      END IF;
+    END;`, { y: year });
+}
+
 exports.handler = handler(['GET', 'POST'], async (event) => {
   if (event.httpMethod === 'GET') {
     const user = requireUser(event);
-    const year = Number((event.queryStringParameters || {}).year) || Number(riyadhToday().slice(0, 4));
+    const current = cycleYear(riyadhToday());
+    await ensureCycle(current);
+    const year = Number((event.queryStringParameters || {}).year) || current;
     const own = user.role !== 'ADMIN';
+    const years = (await query(`SELECT DISTINCT appraisal_year AS y FROM appraisal_steps ORDER BY 1 DESC`)).map((r) => Number(r.y));
     const [steps, rows] = await Promise.all([
       query(`SELECT step_no, step_name, TO_CHAR(due_date, 'YYYY-MM-DD') AS due_date FROM appraisal_steps WHERE appraisal_year = :y ORDER BY step_no`, { y: year }),
       query(`
@@ -17,7 +48,7 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
          WHERE appraisal_year = :y ${own ? 'AND staff_id = :sid' : ''}
          ORDER BY staff_name, step_no`, own ? { y: year, sid: user.sid } : { y: year }),
     ]);
-    return json(200, { year, steps, rows });
+    return json(200, { year, current_year: current, years, steps, rows });
   }
 
   const user = requireCic(event);
@@ -39,3 +70,5 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
     END;`, { sid, y, st: step, f: done ? 'Y' : 'N', by: user.sid });
   return json(200, { ok: true });
 });
+
+module.exports.cycleYear = cycleYear;

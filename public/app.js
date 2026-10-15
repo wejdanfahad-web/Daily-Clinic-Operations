@@ -736,9 +736,8 @@ async function renderCompliance(app) {
 
 // ---------------------------------------------------------------- page: annual appraisal
 async function renderAppraisals(app) {
-  const year = Number(TODAY().slice(0, 4));
-  if (!S.appraisals) S.appraisals = await api('appraisals?year=' + year);
-  const { steps, rows } = S.appraisals;
+  if (!S.appraisals) S.appraisals = await api('appraisals' + (S.apYear ? '?year=' + S.apYear : ''));
+  const { steps, rows, year, years = [year], current_year: currentYear = year } = S.appraisals;
   const cic = isCic();
   const today = TODAY();
   const people = [];
@@ -748,8 +747,12 @@ async function renderAppraisals(app) {
     byStaff.get(r.staff_id).steps[r.step_no] = r;
   }
 
-  app.appendChild(h('div', { class: 'page-title' }, h('h2', null, `Annual Appraisal · ${year}`),
-    h('span', { class: 'note' }, cic ? 'Tap a step to mark it done or not done.' : 'Your appraisal progress. Only the CIC can update it.')));
+  const ySel = h('select', { class: 'in', style: { width: 'auto', height: '36px' }, 'aria-label': 'Appraisal year' },
+    years.map((y) => h('option', { value: y }, y === currentYear ? `${y} (current)` : String(y))));
+  ySel.value = year;
+  ySel.addEventListener('change', () => { S.apYear = Number(ySel.value); S.appraisals = null; render(); });
+  app.appendChild(h('div', { class: 'page-title' }, h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center' } }, h('h2', null, 'Annual Appraisal'), ySel),
+    h('span', { class: 'note' }, (cic ? 'Tap a step to mark it done or not done.' : 'Your appraisal progress. Only the CIC can update it.') + ` A new cycle starts every 30 January.`)));
 
   const heads = h('div', { class: 'ap-heads' });
   for (const s of steps) {

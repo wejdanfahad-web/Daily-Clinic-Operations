@@ -284,6 +284,14 @@ function ev(method, { body, query, cookie } = {}) {
     assert.strictEqual(r.statusCode, 403);
   });
 
+  await t('appraisal cycle restarts on 30 January', async () => {
+    const { cycleYear } = require('../netlify/functions/appraisals');
+    assert.strictEqual(cycleYear('2027-01-29'), 2026);
+    assert.strictEqual(cycleYear('2027-01-30'), 2027);
+    assert.strictEqual(cycleYear('2026-10-15'), 2026);
+    assert.strictEqual(cycleYear('2026-12-31'), 2026);
+  });
+
   await t('wrong HTTP method → 405', async () => {
     const r = await F('login')(ev('GET'));
     assert.strictEqual(r.statusCode, 405);
