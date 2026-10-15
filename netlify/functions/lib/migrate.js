@@ -23,11 +23,11 @@ DECLARE
                            'P5 Ultrasonic', 'Wireless Light Cure', 'Wired Light Cure', 'Intraoral Camera');
 BEGIN
   FOR i IN 1 .. l_all.COUNT LOOP
-    MERGE INTO equipment_catalog t
-    USING (SELECT l_all(i) AS item_name FROM dual) s
-       ON (UPPER(t.item_name) = UPPER(s.item_name) AND t.item_kind = 'MACHINE')
-    WHEN MATCHED THEN UPDATE SET list_status = 'STANDARD', is_active = 'Y', item_name = s.item_name, updated_at = SYSTIMESTAMP
-    WHEN NOT MATCHED THEN INSERT (item_name, item_kind, requires_ppm, list_status) VALUES (s.item_name, 'MACHINE', 'N', 'STANDARD');
+    UPDATE equipment_catalog SET list_status = 'STANDARD', is_active = 'Y', item_name = l_all(i), updated_at = SYSTIMESTAMP
+     WHERE UPPER(item_name) = UPPER(l_all(i)) AND item_kind = 'MACHINE';
+    IF SQL%ROWCOUNT = 0 THEN
+      INSERT INTO equipment_catalog (item_name, item_kind, requires_ppm, list_status) VALUES (l_all(i), 'MACHINE', 'N', 'STANDARD');
+    END IF;
   END LOOP;
   UPDATE equipment_catalog
      SET requires_ppm = CASE WHEN UPPER(item_name) IN ('DENTAL CHAIR', 'X-RAY UNIT', 'MICROSCOPE') THEN 'Y' ELSE 'N' END,

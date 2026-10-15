@@ -99,14 +99,14 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
       const ppm = kind !== 'MACHINE' ? 'N' : it.requires_ppm === undefined || it.requires_ppm === null ? null : (it.requires_ppm === true || it.requires_ppm === 'Y' ? 'Y' : 'N');
       await exec(`
         BEGIN
-          MERGE INTO equipment_catalog t
-          USING (SELECT :nm AS item_name, :kind AS item_kind FROM dual) s
-             ON (UPPER(t.item_name) = UPPER(s.item_name) AND t.item_kind = s.item_kind)
-          WHEN MATCHED THEN UPDATE SET list_status = 'STANDARD', is_active = 'Y', item_name = s.item_name,
-                                       requires_ppm = NVL(:ppm, requires_ppm),
-                                       ppm_interval_months = NVL(:intv, ppm_interval_months), updated_at = SYSTIMESTAMP
-          WHEN NOT MATCHED THEN INSERT (item_name, item_kind, requires_ppm, ppm_interval_months, list_status)
-                                VALUES (s.item_name, s.item_kind, NVL(:ppm, 'N'), :intv, 'STANDARD');
+          UPDATE equipment_catalog
+             SET list_status = 'STANDARD', is_active = 'Y', item_name = :nm, requires_ppm = NVL(:ppm, requires_ppm),
+                 ppm_interval_months = NVL(:intv, ppm_interval_months), updated_at = SYSTIMESTAMP
+           WHERE UPPER(item_name) = UPPER(:nm) AND item_kind = :kind;
+          IF SQL%ROWCOUNT = 0 THEN
+            INSERT INTO equipment_catalog (item_name, item_kind, requires_ppm, ppm_interval_months, list_status)
+            VALUES (:nm, :kind, NVL(:ppm, 'N'), :intv, 'STANDARD');
+          END IF;
           COMMIT;
         END;`, { nm: name, kind, intv, ppm });
     };
