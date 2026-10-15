@@ -247,7 +247,7 @@ function apiHandler(req, res, url, body) {
     case 'staff-admin':
       if (!need('ADMIN')) return;
       if (req.method === 'POST') return send(res, 200, { ok: true, temporary_password: 'AbcDef234' });
-      return send(res, 200, { staff: [{ staff_id: 99, display_name: 'Wejdan', employee_no: '9001', staff_type: 'CIC', app_role: 'ADMIN', login_status: 'ACTIVE', last_login: today + ' 18:40', devices: 0 }, ...staff.map((s) => ({ ...s, app_role: 'STAFF', employee_no: null, login_status: 'NOT_SET', last_login: null, devices: 0 }))] });
+      return send(res, 200, { staff: [{ staff_id: 99, display_name: 'Wejdan', employee_no: '9001', staff_type: 'CIC', app_role: 'ADMIN', login_status: 'ACTIVE', last_login: today + ' 18:40', devices: 0 }, ...staff.map((s) => ({ ...s, app_role: 'STAFF', employee_no: { Rhoda: '111942', Haifa: '144058', Sharifah: '140536' }[s.display_name] || null, login_status: 'NOT_SET', last_login: null, devices: 0 }))] });
     case 'push-key': return send(res, 200, { publicKey: null });
     default: return send(res, 404, { error: 'Not found' });
   }

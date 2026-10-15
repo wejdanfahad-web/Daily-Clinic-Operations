@@ -1268,14 +1268,14 @@ function machinesFromSheets(sheets) {
           asset_tag: cellText(r[cTag]) || null, status: 'Functioning', last_ppm_date: sheetDate(r[cLast]), ppm_due_date: sheetDate(r[cDue]), sheet: sh.name });
       }
     } else {
-      const cType = col('type'), cName = col('item name', 'item');
+      const cType = col('type'), cName = col('item name', 'item'), cStaff = col('staff id', 'staff');
       for (const r of sh.rows.slice(hi + 1)) {
         if (!r) continue;
         const c = clinicNo(r[cLoc]);
         const name = cellText(r[cType]) || titleCase(cellText(r[cName]));
         if (!c || !name) continue;
         out.push({ clinic_id: c, item_name: name, serial_no: cellText(r[cSerial]) || null, asset_tag: null,
-          status: cellText(r[cStatus]) || 'Functioning', last_ppm_date: null, ppm_due_date: null, sheet: sh.name });
+          status: cellText(r[cStatus]) || 'Functioning', last_ppm_date: null, ppm_due_date: null, staff_no: cStaff >= 0 ? cellText(r[cStaff]) || null : null, sheet: sh.name });
       }
     }
   }
@@ -1287,7 +1287,7 @@ function importSheetCard() {
     h('summary', { style: { cursor: 'pointer', fontWeight: 600, fontSize: '16px' } }, 'Import machines from Excel'));
   const file = h('input', { type: 'file', accept: '.xlsx', class: 'in', style: { padding: '8px' } });
   const out = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } });
-  card.append(h('div', { class: 'hint' }, 'Upload the Endo inventory tracker or the equipment master list (.xlsx). Machines are matched by item and Serial #, so importing the same file again updates instead of duplicating. PPM dates are kept only for the dental chair, X-ray unit and microscope.'),
+  card.append(h('div', { class: 'hint' }, 'Upload the Endo inventory tracker or the equipment master list (.xlsx). Each machine goes to the clinic in its Location/Clinic column; the Staff ID shows who reported it. Machines are matched by item and Serial #, so importing the same file again updates instead of duplicating. PPM dates are kept only for the dental chair, X-ray unit and microscope.'),
     h('label', { class: 'f' }, 'Excel file', file), out);
   file.addEventListener('change', async () => {
     out.textContent = '';
@@ -1299,27 +1299,63 @@ function importSheetCard() {
     out.textContent = '';
     if (!rows.length) { out.appendChild(h('div', { class: 'msg bad' }, 'No machines found. The sheet needs a header row with Serial and Location/Clinic columns.')); return; }
     const active = new Set(S.ref.clinics.map((c) => Number(c.clinic_id)));
-    const use = rows.filter((r) => active.has(r.clinic_id));
-    const skip = rows.length - use.length;
-    const byItem = {};
-    for (const r of use) byItem[r.item_name] = (byItem[r.item_name] || 0) + 1;
-    const today = TODAY();
-    const overdue = use.filter((r) => r.ppm_due_date && r.ppm_due_date < today).length;
-    const noSerial = use.filter((r) => !r.serial_no).length;
-    out.append(
-      h('div', null, h('b', null, `${use.length} machines found`), ` in ${new Set(use.map((r) => r.clinic_id)).size} clinics`,
-        skip ? h('span', { class: 'note' }, ` · ${skip} skipped (clinic not in use: ${[...new Set(rows.filter((r) => !active.has(r.clinic_id)).map((r) => 'Cl ' + r.clinic_id))].join(', ')})`) : null),
-      h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } }, Object.entries(byItem).sort((a, b) => b[1] - a[1]).map(([n, k]) => h('span', { class: 'chip', style: { background: '#F3F4F1' } }, n, h('span', { class: 'cat' }, String(k))))),
-      overdue ? h('div', { class: 'msg bad' }, `${overdue} of these already have a PPM due date in the past. After import they show as "PPM overdue" and the clinic staff get a notification at 7:30 AM.`) : null,
-      noSerial ? h('div', { class: 'note' }, `${noSerial} machine${noSerial === 1 ? ' has' : 's have'} no Serial # in the sheet; staff can add it with Update.`) : null);
-    const go = h('button', { type: 'button', class: 'btn dark', onclick: async () => {
+    const inClinic = rows.filter((r) => active.has(r.clinic_id));
+    const skip = rows.length - inClinic.length;
+
+    // Staff IDs in the sheet → current staff (their login ID). IDs of people who have left are left out.
+    let people = [];
+    try { people = (await api('staff-admin')).staff || []; } catch { /* list without names */ }
+    const byNo = new Map(people.filter((p) => p.employee_no && p.employment_status !== 'INACTIVE').map((p) => [String(p.employee_no).trim(), p]));
+    const ids = [...new Set(inClinic.map((r) => r.staff_no).filter(Boolean))];
+    const anyMatch = ids.some((i) => byNo.has(i));
+    const include = new Map(ids.map((i) => [i, !anyMatch || byNo.has(i)]));
+    const chosen = () => inClinic.filter((r) => !r.staff_no || include.get(r.staff_no));
+
+    const summary = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } });
+    const go = h('button', { type: 'button', class: 'btn dark' });
+    const paint = () => {
+      const use = chosen();
+      summary.textContent = '';
+      const byItem = {};
+      for (const r of use) byItem[r.item_name] = (byItem[r.item_name] || 0) + 1;
+      const today = TODAY();
+      const overdue = use.filter((r) => r.ppm_due_date && r.ppm_due_date < today).length;
+      const noSerial = use.filter((r) => !r.serial_no).length;
+      summary.append(
+        h('div', null, h('b', null, `${use.length} machines to import`), ` in ${new Set(use.map((r) => r.clinic_id)).size} clinics`,
+          skip ? h('span', { class: 'note' }, ` · ${skip} skipped (clinic not in use: ${[...new Set(rows.filter((r) => !active.has(r.clinic_id)).map((r) => 'Cl ' + r.clinic_id))].join(', ')})`) : null),
+        h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } }, Object.entries(byItem).sort((a, b) => b[1] - a[1]).map(([n, k]) => h('span', { class: 'chip', style: { background: '#F3F4F1' } }, n, h('span', { class: 'cat' }, String(k))))),
+        overdue ? h('div', { class: 'msg bad' }, `${overdue} of these already have a PPM due date in the past. After import they show as "PPM overdue" and the clinic staff get a notification at 7:30 AM.`) : null,
+        noSerial ? h('div', { class: 'note' }, `${noSerial} machine${noSerial === 1 ? ' has' : 's have'} no Serial # in the sheet; staff can add it with Update.`) : null);
+      go.textContent = `Import ${use.length} machines`; go.disabled = !use.length;
+    };
+    if (ids.length) {
+      const box = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+        h('b', { style: { fontSize: '13px' } }, 'Reported by (Staff ID)'),
+        anyMatch ? h('div', { class: 'note' }, 'IDs that don\'t belong to a current staff member are left out. Tick one to include it.')
+          : h('div', { class: 'note' }, 'No Staff ID matches a staff login yet (set them in Staff & logins), so all are included. Untick anyone who has left.'));
+      for (const id of ids.sort()) {
+        const p = byNo.get(id);
+        const mine = inClinic.filter((r) => r.staff_no === id);
+        const cb = h('input', { type: 'checkbox', checked: include.get(id) });
+        cb.addEventListener('change', () => { include.set(id, cb.checked); paint(); });
+        box.appendChild(h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px' } }, cb,
+          h('span', { style: { fontFamily: 'var(--mono)' } }, id),
+          p ? h('span', null, p.display_name) : h('span', { class: 'status new' }, anyMatch ? 'not a current staff member' : 'not linked'),
+          h('span', { class: 'note' }, `${mine.length} machine${mine.length === 1 ? '' : 's'} · ${[...new Set(mine.map((r) => 'Cl ' + r.clinic_id))].join(', ')}`)));
+      }
+      out.appendChild(box);
+    }
+    go.addEventListener('click', async () => {
+      const use = chosen();
       go.disabled = true; go.textContent = 'Importing…';
       try {
         const r = await api('inventory', { method: 'POST', body: { action: 'import', rows: use.map(({ sheet, ...x }) => x) } });
         toast(`Imported ${r.saved} machines.`); INV.data = null; render();
-      } catch (e) { toast(e.message); go.disabled = false; go.textContent = `Import ${use.length} machines`; }
-    } }, `Import ${use.length} machines`);
-    out.appendChild(h('div', null, go));
+      } catch (e) { toast(e.message); paint(); }
+    });
+    out.append(summary, h('div', null, go));
+    paint();
   });
   return card;
 }

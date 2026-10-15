@@ -151,7 +151,7 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
       const cid = Number(r.clinic_id);
       const name = clean(r.item_name, 120);
       if (!Number.isInteger(cid) || cid < 1 || cid > 999 || !name) throw new HttpError(400, `Row ${i + 1}: clinic and item name are required.`);
-      rows.push({ c: cid, n: name, s: clean(r.serial_no, 60), t: clean(r.asset_tag, 40),
+      rows.push({ c: cid, n: name, s: clean(r.serial_no, 60), t: clean(r.asset_tag, 40), sn: clean(r.staff_no, 20),
         st: STAT[String(r.status || 'Functioning').trim().toUpperCase()] || 'IN_SERVICE',
         lp: optDate(r.last_ppm_date, `Row ${i + 1}: last PPM date`), due: optDate(r.ppm_due_date, `Row ${i + 1}: PPM due date`) });
     });
@@ -161,9 +161,11 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
 DECLARE
   l_item NUMBER; l_eq NUMBER;
 BEGIN
-  FOR r IN (SELECT j.c, j.n, j.s, j.t, j.st, j.lp, j.due
+  FOR r IN (SELECT j.c, j.n, j.s, j.t, j.st, j.lp, j.due,
+                   (SELECT MIN(p.staff_id) FROM staff p WHERE UPPER(p.employee_no) = UPPER(j.sn)) AS by_staff
               FROM JSON_TABLE(:js, '$[*]' COLUMNS (c NUMBER PATH '$.c', n VARCHAR2(120) PATH '$.n', s VARCHAR2(60) PATH '$.s',
-                     t VARCHAR2(40) PATH '$.t', st VARCHAR2(15) PATH '$.st', lp VARCHAR2(10) PATH '$.lp', due VARCHAR2(10) PATH '$.due')) j
+                     t VARCHAR2(40) PATH '$.t', st VARCHAR2(15) PATH '$.st', lp VARCHAR2(10) PATH '$.lp', due VARCHAR2(10) PATH '$.due',
+                     sn VARCHAR2(20) PATH '$.sn')) j
              WHERE EXISTS (SELECT 1 FROM clinics k WHERE k.clinic_id = j.c AND k.is_active = 'Y')) LOOP
     BEGIN
       SELECT item_id INTO l_item FROM equipment_catalog
@@ -185,13 +187,13 @@ BEGIN
     EXCEPTION WHEN NO_DATA_FOUND THEN l_eq := NULL;
     END;
     IF l_eq IS NULL THEN
-      INSERT INTO equipment_ppm (clinic_id, item_id, asset_tag, serial_no, quantity, condition_status, last_ppm_date, ppm_due_date, updated_by, notes)
-      VALUES (r.c, l_item, r.t, r.s, 1, r.st, TO_DATE(r.lp, 'YYYY-MM-DD'), TO_DATE(r.due, 'YYYY-MM-DD'), :by, 'Imported from the inventory sheet');
+      INSERT INTO equipment_ppm (clinic_id, item_id, asset_tag, serial_no, quantity, condition_status, last_ppm_date, ppm_due_date, last_verified_by, updated_by, notes)
+      VALUES (r.c, l_item, r.t, r.s, 1, r.st, TO_DATE(r.lp, 'YYYY-MM-DD'), TO_DATE(r.due, 'YYYY-MM-DD'), r.by_staff, :by, 'Imported from the inventory sheet');
     ELSE
       UPDATE equipment_ppm
          SET clinic_id = r.c, asset_tag = NVL(r.t, asset_tag), condition_status = r.st,
              last_ppm_date = NVL(TO_DATE(r.lp, 'YYYY-MM-DD'), last_ppm_date),
-             ppm_due_date  = NVL(TO_DATE(r.due, 'YYYY-MM-DD'), ppm_due_date), updated_by = :by
+             ppm_due_date  = NVL(TO_DATE(r.due, 'YYYY-MM-DD'), ppm_due_date), last_verified_by = NVL(r.by_staff, last_verified_by), updated_by = :by
        WHERE equipment_id = l_eq;
     END IF;
   END LOOP;
