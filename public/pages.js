@@ -24,7 +24,7 @@ function draftChips(entry, homeClinic) {
 }
 
 // Generic editor for a list of entries (used by the planner draft)
-function entryEditor({ title, entries, homeClinic, staffList, onSave, onMove }) {
+function entryEditor({ title, entries, homeClinic, staffList, onSave, onMove, usedClinics = [] }) {
   const { types } = refMaps();
   openDialog((body, close) => {
     let list = entries.map((e) => ({ ...e }));
@@ -38,7 +38,14 @@ function entryEditor({ title, entries, homeClinic, staffList, onSave, onMove }) 
         const moveSel = onMove && staffList ? h('select', { class: 'in', style: { height: '36px', width: 'auto' }, 'aria-label': 'Move to' },
           h('option', { value: '' }, 'Move to…'), staffList.map((s) => h('option', { value: s.staff_id }, s.display_name))) : null;
         if (moveSel) moveSel.addEventListener('change', () => { if (moveSel.value) { onMove(e, Number(moveSel.value)); close(); } });
-        cur.appendChild(h('div', { class: 'item' }, h('div', { class: 'cell' }, draftChips(e, homeClinic)),
+        const clinical = (types[e.type_code] || {}).category === 'CLINICAL';
+        const clinicSel = clinical ? h('select', { class: 'in', style: { height: '36px', width: 'auto' }, 'aria-label': 'Clinic' },
+          S.ref.clinics.map((c) => h('option', { value: c.clinic_id }, 'Cl ' + c.clinic_id))) : null;
+        if (clinicSel) {
+          clinicSel.value = e.clinic_id || homeClinic || '';
+          clinicSel.addEventListener('change', () => { e.clinic_id = Number(clinicSel.value); paint(); });
+        }
+        cur.appendChild(h('div', { class: 'item' }, h('div', { class: 'cell' }, draftChips(e, homeClinic), clinical ? h('span', { class: 'note' }, 'in') : null, clinicSel),
           h('div', { style: { display: 'flex', gap: '6px' } }, moveSel,
             h('button', { type: 'button', class: 'btn small danger', onclick: () => { list.splice(i, 1); paint(); } }, 'Remove'))));
       });
@@ -58,6 +65,15 @@ function entryEditor({ title, entries, homeClinic, staffList, onSave, onMove }) 
     const doc2 = h('select', { class: 'in' }, docOpts());
     const clinicSel = h('select', { class: 'in' }, S.ref.clinics.map((c) => h('option', { value: c.clinic_id }, c.clinic_name)));
     clinicSel.value = homeClinic || '';
+    // double clinic: once her own clinic is taken in this cell, suggest the first clinic free that session
+    const suggestClinic = () => {
+      const used = new Set([...usedClinics.map(Number), ...list.filter((e) => e.clinic_id).map((e) => Number(e.clinic_id))]);
+      if (list.some((e) => Number(e.clinic_id) === Number(homeClinic))) {
+        const free = S.ref.clinics.find((c) => !used.has(Number(c.clinic_id)));
+        if (free) clinicSel.value = free.clinic_id;
+      }
+    };
+    suggestClinic();
     const notes = h('input', { class: 'in', maxlength: 120, placeholder: 'Optional note' });
     const doc1L = h('label', { class: 'f' }, 'Doctor', doc1);
     const doc2L = h('label', { class: 'f' }, 'Assisted by (2nd doctor)', doc2);
@@ -77,7 +93,7 @@ function entryEditor({ title, entries, homeClinic, staffList, onSave, onMove }) 
       if (ids.length === 2 && ids[0] === ids[1]) return showErr('The two doctors must be different.');
       if (t.category === 'UNAVAILABLE') list = [];
       list.push({ type_code: typeSel.value, doctor_ids: ids, clinic_id: clinicL.hidden ? null : Number(clinicSel.value) || null, notes: notes.value || '' });
-      doc1.value = ''; doc2.value = ''; notes.value = ''; paint();
+      doc1.value = ''; doc2.value = ''; notes.value = ''; paint(); suggestClinic();
     } }, '+ Add to this cell');
     body.append(h('div', { class: 'f', style: { fontSize: '12px', color: '#4F5D5A', marginTop: '6px' } }, 'Add'),
       h('label', { class: 'f' }, 'Type', typeSel), h('div', { class: 'grid2' }, doc1L, doc2L), clinicL, h('label', { class: 'f' }, 'Note', notes),
@@ -328,6 +344,7 @@ PAGES.planner = async function renderPlanner(app) {
         const btn = h('button', { type: 'button', class: 'cell', 'aria-label': `${s.display_name}, ${sess}: edit plan` }, chips.length ? chips : h('span', { class: 'empty' }, '+ plan'));
         btn.addEventListener('click', () => entryEditor({
           title: `${s.display_name} · ${fmtDay(date)} · ${sess}`, entries, homeClinic: s.home_clinic_id,
+          usedClinics: Object.entries(P.draft).filter(([id]) => Number(id) !== Number(s.staff_id)).flatMap(([, d]) => (d[sess] || []).map((e) => e.clinic_id).filter(Boolean)),
           staffList: staff.filter((x) => x.staff_id !== s.staff_id),
           onSave: (list) => { P.draft[s.staff_id] = P.draft[s.staff_id] || { AM: [], PM: [] }; P.draft[s.staff_id][sess] = list; scheduleSave(); render(); },
           onMove: (entry, toId) => moveEntry(s.staff_id, sess, entry, toId),

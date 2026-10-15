@@ -395,8 +395,27 @@ function editCell(m, sess) {
     // current assignments with remove
     const cur = h('div', { class: 'current' });
     if (!current.length) cur.appendChild(h('div', { class: 'note' }, 'Nothing assigned yet.'));
+    const clinicPicker = (r) => {
+      const sel = h('select', { class: 'in', style: { height: '34px', width: 'auto', fontSize: '13px' }, 'aria-label': `Clinic for ${r.doctor_name}` },
+        S.ref.clinics.map((c) => h('option', { value: c.clinic_id }, 'Cl ' + c.clinic_id)));
+      sel.value = r.clinic_id || m.staff.home_clinic_id || '';
+      sel.addEventListener('change', async () => {
+        sel.disabled = true;
+        try {
+          await api('assign', { method: 'POST', body: { work_date: date, client_request_id: crypto.randomUUID(), entries: [{
+            session: r.session_code, staff_id: r.staff_id, type_code: r.type_code, doctor_ids: r.doctor_id ? [r.doctor_id] : [],
+            clinic_id: Number(sel.value), notes: r.notes || null, supersedes_log_id: r.log_id, action: 'AMEND' }] } });
+          close(); toast(`${r.doctor_name} moved to Clinic ${sel.value}.`); await refreshBoard();
+        } catch (err) { showErr(err.message); sel.disabled = false; }
+      });
+      return sel;
+    };
     for (const g of current) {
-      const label = chipFor(g, m.staff.home_clinic_id);
+      const clinical = (types[g[0].type_code] || {}).category === 'CLINICAL';
+      const label = clinical
+        ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, g.map((r) => h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+            h('span', { class: 'chip', style: catStyle(r.doctor_category) }, h('span', { class: 'cat' }, catLabel(r.doctor_category)), r.doctor_name), h('span', { class: 'note' }, 'in'), clinicPicker(r))))
+        : chipFor(g, m.staff.home_clinic_id);
       cur.appendChild(h('div', { class: 'item' }, h('div', { class: 'cell' }, label),
         h('button', { type: 'button', class: 'btn small danger', onclick: async () => {
           try {
@@ -421,6 +440,12 @@ function editCell(m, sess) {
     const doc2 = h('select', { class: 'in' }, docOpts());
     const clinicSel = h('select', { class: 'in' }, S.ref.clinics.map((c) => h('option', { value: c.clinic_id }, c.clinic_name)));
     clinicSel.value = m.staff.home_clinic_id || '';
+    // double clinic: if she already works in her own clinic this session, suggest the first free clinic
+    const usedNow = new Set(S.board.assignments.filter((a) => a.category === 'CLINICAL' && a.clinic_id && (a.session_code === sess || a.session_code === 'DAY')).map((a) => Number(a.clinic_id)));
+    if (current.some((g) => g.some((r) => r.category === 'CLINICAL' && Number(r.clinic_id) === Number(m.staff.home_clinic_id)))) {
+      const freeClinic = S.ref.clinics.find((c) => !usedNow.has(Number(c.clinic_id)));
+      if (freeClinic) clinicSel.value = freeClinic.clinic_id;
+    }
     const wholeDay = h('input', { type: 'checkbox' });
     const notes = h('input', { class: 'in', maxlength: 120, placeholder: 'Optional note' });
 
