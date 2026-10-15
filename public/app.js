@@ -56,6 +56,7 @@ function toast(text) {
 // ---------------------------------------------------------------- dates (Riyadh)
 const riyadhIso = (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 const TODAY = () => riyadhIso();
+const riyadhClock = () => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Riyadh', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date());
 const isoToDate = (iso) => new Date(iso + 'T12:00:00Z');
 const addDays = (iso, n) => { const d = isoToDate(iso); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const dow = (iso) => isoToDate(iso).getUTCDay();
@@ -210,10 +211,10 @@ async function loadMe() {
 }
 async function loadRef() { if (!S.ref) S.ref = await api('reference'); }
 async function loadBoard(date, { live = !!S.me } = {}) {
-  return api(`board?date=${date}${live && S.me && !S.me.mustChange ? '&live=1' : ''}`);
+  return api(`board?date=${date}${live && S.me && !S.me.mustChange ? '&live=1&t=' + Date.now() : ''}`);
 }
 async function publicBoard(date) {
-  if (!S.boardsCache[date]) S.boardsCache[date] = api(`board?date=${date}`).catch((e) => { delete S.boardsCache[date]; throw e; });
+  if (!S.boardsCache[date]) S.boardsCache[date] = api(`board?date=${date}${isCic() ? '&live=1&t=' + Date.now() : ''}`).catch((e) => { delete S.boardsCache[date]; throw e; });
   return S.boardsCache[date];
 }
 
@@ -297,8 +298,9 @@ async function renderAssign(app) {
   const assignments = S.board.assignments;
   const model = boardModel(assignments);
   const editable = canEditDay() && !weekend;
+  const hidden = !!S.board.hidden;
 
-  if (!weekend) app.appendChild(kpis(assignments, model));
+  if (!weekend && !hidden) app.appendChild(kpis(assignments, model));
 
   const today = TODAY();
   const badge = date === today ? h('span', { class: 'badge-day' }, 'TODAY') : h('span', { class: 'badge-day other' }, date < today ? 'PAST' : 'UPCOMING');
@@ -310,7 +312,12 @@ async function renderAssign(app) {
 
   if (weekend) {
     board.appendChild(h('div', { class: 'closed' }, h('b', null, `No clinic sessions on ${DAYS[dow(date)]}`), 'Clinics run Sunday to Thursday.'));
+  } else if (hidden) {
+    board.appendChild(h('div', { class: 'closed' }, h('b', null, 'Not shown yet'), `The schedule for ${fmtLong(date)} is shown at 7:30 AM on the day.`));
   } else {
+    if (isCic() && (date > today || (date === today && riyadhClock() < '07:30'))) {
+      board.appendChild(h('div', { class: 'msg', style: { margin: '12px 20px 0', background: '#FFF4E5', color: '#8A4B0F' } }, `Only you can see this now. Staff and doctors see ${fmtDay(date)}'s schedule and duties from 7:30 AM that day.`));
+    }
     if (!assignments.length) {
       board.appendChild(h('div', { class: 'msg', style: { margin: '12px 20px 0', background: '#F7F8F6', color: '#3E4B48' } },
         editable ? 'Nothing recorded for this day yet. Tap any cell below to start assigning.' : 'The assignments for this day have not been published yet.'));
@@ -483,7 +490,8 @@ async function dutiesCard(date) {
   const day = isWeekend(date) ? nextWorkday(date) : date;
   const next = nextWorkday(day);
   let d, n;
-  try { [d, n] = await Promise.all([api('duties?date=' + day), api('duties?date=' + next)]); }
+  const bust = isCic() ? '&t=' + Date.now() : '';
+  try { [d, n] = await Promise.all([api('duties?date=' + day + bust), api('duties?date=' + next + bust)]); }
   catch (e) { card.append(h('h2', null, 'Daily duties'), h('div', { class: 'msg bad' }, e.message)); return card; }
   card.appendChild(h('div', { class: 'row-between' }, h('h2', null, 'Daily duties · ' + fmtDay(day)), h('span', { class: 'pill teal' }, 'AUTO-ROTATED')));
   const cic = isCic();
@@ -504,6 +512,7 @@ async function dutiesCard(date) {
     slotLabel ? h('span', { style: { fontFamily: 'var(--mono)', fontSize: '11px', padding: '3px 6px', borderRadius: '5px', background: '#9FD8CF', color: '#0C2B29' } }, slotLabel) : null,
     p ? p.name : 'Nobody available', p && p.nowUnavailable ? h('span', { title: 'Now marked not available', style: { color: '#F6DE6A' } }, ' ⚠') : null);
   if (d.closed) { card.appendChild(h('div', { class: 'note' }, 'No clinics that day.')); return card; }
+  if (d.hidden) { card.appendChild(h('div', { class: 'note' }, `${fmtDay(day)}'s duties are shown at 7:30 AM on the day.`)); return card; }
   card.appendChild(h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
     h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', color: '#0E6B66' } }, instIcon(), h('b', { style: { color: '#17262B' } }, 'Instruments'), h('span', { class: 'note' }, '· dental assistants · CSSD 8:40 / 12:40')),
     h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' } },
@@ -514,12 +523,12 @@ async function dutiesCard(date) {
     h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' } }, d.crash.map((c) => [person(c, null, false), change('CRASH', c, 'STAFF_NURSE')]))));
   if (cic && d.skipped && d.skipped.length) card.appendChild(h('div', { class: 'note' }, 'CIC only · turn passed over: ' + d.skipped.map((x) => `${x.name} (${x.duty}, ${x.why})`).join(', ')));
   if (cic && !d.allRecorded && day >= TODAY()) card.appendChild(h('div', { class: 'row-between' },
-    h('span', { class: 'note' }, 'Preview · confirmed automatically at 4 PM the day before'),
+    h('span', { class: 'note' }, 'Preview · confirmed automatically at 4 PM the day before (staff see it at 7:30 AM on the day)'),
     h('button', { type: 'button', class: 'btn small', onclick: async () => { try { await api('duties', { method: 'POST', body: { action: 'record', date: day } }); toast('Duties recorded.'); render(); } catch (e) { toast(e.message); } } }, 'Confirm now')));
-  if (!n.closed) card.appendChild(h('div', { style: { background: '#F7F8F6', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: '#3E4B48' } },
+  if (!n.closed && !n.hidden) card.appendChild(h('div', { style: { background: '#F7F8F6', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: '#3E4B48' } },
     `Next (${fmtDay(next)}): instruments `, h('b', null, `AM ${n.instruments.AM ? n.instruments.AM.name : '—'} · PM ${n.instruments.PM ? n.instruments.PM.name : '—'}`),
     ' · crash cart ', h('b', null, n.crash.map((c) => c.name).join(' & ') || '—')));
-  card.appendChild(h('div', { class: 'hint' }, 'Fair rotation through everyone in turn. Anyone not available that session, or on Vitals (instruments only), is passed over and keeps her place. Each person gets a phone notification at 4 PM the day before. No notifications are sent after 4:30 PM.'));
+  card.appendChild(h('div', { class: 'hint' }, 'Fair rotation through everyone in turn. Anyone not available that session, or on Vitals (instruments only), is passed over and keeps her place. Staff see the duties and get a phone notification at 7:30 AM on the day. No notifications are sent between 4:30 PM and 7:30 AM.'));
   return card;
 }
 
@@ -587,6 +596,7 @@ function findMyClinicCard() {
       const li = h('li', null, h('b', null, fmtDay(day)), h('span', { class: 'note' }, 'Loading…'));
       list.appendChild(li);
       publicBoard(day).then((b) => {
+        if (b.hidden) { li.lastChild.textContent = 'Shown at 7:30 AM on the day'; li.lastChild.className = 'note'; return; }
         const mine = b.assignments.filter((a) => Number(a.doctor_id) === id);
         const part = (sess) => {
           const rows = mine.filter((a) => a.session_code === sess || a.session_code === 'DAY');

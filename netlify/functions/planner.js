@@ -187,9 +187,10 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
     const d = draft[sid] || {};
     const describe = (sess) => (d[sess] || []).map((e) => typeMap[e.type_code] ? typeMap[e.type_code].type_name.replace(' (with doctor)', '') + (e.clinic_id ? ' Cl ' + e.clinic_id : '') : e.type_code).join(', ') || '—';
     const r = await notifyStaff(sid, {
-      eventType: 'SCHEDULE_CHANGE', title: `Schedule for ${dayLabel}`,
+      eventType: 'SCHEDULE_CHANGE', title: `Your schedule today (${dayLabel})`,
       body: `AM: ${describe('AM')} · PM: ${describe('PM')}`, url: `/#/assign/${date}`,
       dedupeKey: `PUB:${date}:${sid}:${Date.now()}`,
+      notBefore: `${date} 07:30`, // delivered at 07:30 on the day
     });
     notified.push({ staff_id: sid, status: r.status });
   }

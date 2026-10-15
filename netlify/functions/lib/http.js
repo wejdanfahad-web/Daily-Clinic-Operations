@@ -19,6 +19,8 @@ function cachedJson(body, seconds = 60) {
   return json(200, body, {
     'Cache-Control': 'public, max-age=0, must-revalidate',
     'Netlify-CDN-Cache-Control': `public, s-maxage=${seconds}, stale-while-revalidate=${seconds * 2}`,
+    // signed-in people (CIC sees days ahead) never share a cached copy with the public
+    'Netlify-Vary': 'query,cookie=endo_session',
   });
 }
 
@@ -102,6 +104,20 @@ function riyadhToday(offsetDays = 0) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 }
 
+// Riyadh wall-clock time "HH:MM"
+function riyadhTime(now = new Date()) {
+  return new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Riyadh', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(now);
+}
+// A day's schedule and duties are shown to staff (and the public) only from 07:30 Riyadh on that day.
+// The CIC sees and confirms everything ahead of time.
+const STAFF_RELEASE = '07:30';
+function releasedToStaff(date) {
+  const today = riyadhToday();
+  if (date < today) return true;
+  if (date > today) return false;
+  return riyadhTime() >= STAFF_RELEASE;
+}
+
 const isIsoDate = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s + 'T00:00:00Z'));
 
 // Wrap a handler: method check + uniform error responses.
@@ -122,5 +138,5 @@ function handler(methods, fn) {
 module.exports = {
   json, cachedJson, parseBody, HttpError, handler,
   signSession, verifySession, sessionCookie, clearCookie, readSession,
-  requireUser, requireCic, requireCicOrInCharge, riyadhToday, isIsoDate,
+  requireUser, requireCic, requireCicOrInCharge, riyadhToday, riyadhTime, releasedToStaff, STAFF_RELEASE, isIsoDate,
 };

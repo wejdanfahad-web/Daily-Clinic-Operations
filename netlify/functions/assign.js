@@ -39,6 +39,7 @@ exports.handler = handler(['POST'], async (event) => {
       url: `/#/assign/${work_date}`,
       dedupeKey: `ASG:${w.log_id}`,
       assignmentLogId: w.log_id,
+      notBefore: `${work_date} 07:30`, // staff learn a day's schedule at 07:30 on that day
     });
     notified.push({ log_id: w.log_id, status: r.status });
   }

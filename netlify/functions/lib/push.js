@@ -45,6 +45,7 @@ function riyadhClock(now = new Date()) {
 }
 let clock = () => new Date();            // replaceable in tests
 const _setClock = (fn) => { clock = fn || (() => new Date()); };
+const riyadhStamp = (now = clock()) => `${new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now)} ${riyadhClock(now)}`;
 const isQuietTime = (now = clock()) => { const t = riyadhClock(now); return t >= QUIET_FROM || t < QUIET_UNTIL; };
 
 // Push one payload to every active device of one staff member.
@@ -72,13 +73,14 @@ async function sendToDevices(staffId, payload) {
 }
 
 // Send one message to a staff member (or hold it until 07:30 during quiet hours).
-async function notifyStaff(staffId, { eventType, title, body, url = '/', dedupeKey, equipmentId = null, assignmentLogId = null }) {
+// notBefore: 'YYYY-MM-DD HH:MM' Riyadh — never deliver before then (e.g. a day's schedule at 07:30 on that day).
+async function notifyStaff(staffId, { eventType, title, body, url = '/', dedupeKey, equipmentId = null, assignmentLogId = null, notBefore = null }) {
   const key = dedupeKey || `${eventType}:${staffId}:${Date.now()}`;
   const already = await query('SELECT COUNT(*) AS n FROM notification_log WHERE dedupe_key = :k', { k: key.slice(0, 200) });
   if (already[0] && Number(already[0].n) > 0) return { status: 'DUPLICATE' };
 
-  if (isQuietTime()) {
-    await logNotification({ eventType, staffId, dedupeKey: key, status: 'PENDING', body: JSON.stringify({ title, body, url }).slice(0, 1600), equipmentId, assignmentLogId });
+  if (isQuietTime() || (notBefore && riyadhStamp() < notBefore)) {
+    await logNotification({ eventType, staffId, dedupeKey: key, status: 'PENDING', body: JSON.stringify({ title, body, url, notBefore }).slice(0, 1600), equipmentId, assignmentLogId });
     return { status: 'QUEUED' };
   }
   const r = await sendToDevices(staffId, JSON.stringify({ title, body, url }));
@@ -90,22 +92,30 @@ async function notifyStaff(staffId, { eventType, title, body, url = '/', dedupeK
 async function flushPending() {
   if (isQuietTime()) return { sent: 0, held: true };
   const rows = await query(`
-    SELECT notification_id, staff_id, message_body FROM notification_log
-     WHERE status = 'PENDING' AND channel = 'PUSH' AND created_at > SYSTIMESTAMP - INTERVAL '2' DAY
+    SELECT notification_id, staff_id, message_body,
+           CASE WHEN created_at < SYSTIMESTAMP - INTERVAL '2' DAY THEN 'Y' ELSE 'N' END AS is_old
+      FROM notification_log
+     WHERE status = 'PENDING' AND channel = 'PUSH' AND created_at > SYSTIMESTAMP - INTERVAL '30' DAY
      ORDER BY created_at`, {}, { limit: 1000 });
   let sent = 0;
+  const now = riyadhStamp();
   for (const r of rows) {
     let msg = {};
     try { msg = JSON.parse(r.message_body || '{}'); } catch { msg = { title: 'ENDO Clinic', body: r.message_body }; }
+    if (msg.notBefore && now < msg.notBefore) continue;            // not its day yet
+    const dayPassed = msg.notBefore ? now.slice(0, 10) > msg.notBefore.slice(0, 10) : r.is_old === 'Y';
+    if (dayPassed) {                                                // too late to be useful
+      await exec(`BEGIN UPDATE notification_log SET status = 'FAILED', error_message = 'Expired before it could be delivered' WHERE notification_id = :id; COMMIT; END;`, { id: r.notification_id });
+      continue;
+    }
     const res = await sendToDevices(r.staff_id, JSON.stringify({ title: msg.title || 'ENDO Clinic', body: msg.body || '', url: msg.url || '/' }));
     if (res.status === 'SENT') sent++;
     await exec(`BEGIN UPDATE notification_log SET status = :st, message_body = :b, recipient = :rc, error_message = :er,
                        sent_at = CASE WHEN :st = 'SENT' THEN SYSTIMESTAMP END WHERE notification_id = :id; COMMIT; END;`,
     { st: res.status, b: String(msg.body || '').slice(0, 1600), rc: res.total ? `${res.sent}/${res.total} devices` : null, er: res.error ? String(res.error).slice(0, 1000) : null, id: r.notification_id });
   }
-  // anything older than 2 days is no longer useful
   await exec(`BEGIN UPDATE notification_log SET status = 'FAILED', error_message = 'Expired while waiting for working hours'
-               WHERE status = 'PENDING' AND created_at <= SYSTIMESTAMP - INTERVAL '2' DAY; COMMIT; END;`);
+               WHERE status = 'PENDING' AND created_at <= SYSTIMESTAMP - INTERVAL '30' DAY; COMMIT; END;`);
   return { sent, total: rows.length };
 }
 

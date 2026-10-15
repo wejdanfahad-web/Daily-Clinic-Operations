@@ -338,7 +338,7 @@ function ev(method, { body, query, cookie } = {}) {
 
   await t('duties: public GET hides who was passed over', async () => {
     responder = (sql) => /v_rotation_queue/.test(sql) ? rows([{ ROTATION_CODE: 'INSTRUMENTS', STAFF_ID: 1, STAFF_NAME: 'Rhoda', QUEUE_POSITION: 1 }]) : rows([]);
-    const r = await F('duties')(ev('GET', { query: { date: '2030-01-06' } }));
+    const r = await F('duties')(ev('GET', { query: { date: '2020-01-05' } })); // a released (past) day
     assert.strictEqual(r.statusCode, 200);
     const b = JSON.parse(r.body);
     assert.strictEqual(b.instruments.AM.name, 'Rhoda');
@@ -358,7 +358,7 @@ function ev(method, { body, query, cookie } = {}) {
     assert(!calls.some((c) => /push_subscriptions/.test(c.statementText)), 'no device lookup / send at night');
     const ins = calls.find((c) => /INSERT INTO notification_log/.test(c.statementText));
     assert.strictEqual(ins.binds.find((b) => b.name === 'st').value, 'PENDING');
-    assert.deepStrictEqual(JSON.parse(ins.binds.find((b) => b.name === 'body').value), { title: 'T', body: 'B', url: '/x' });
+    assert.deepStrictEqual(JSON.parse(ins.binds.find((b) => b.name === 'body').value), { title: 'T', body: 'B', url: '/x', notBefore: null });
     const f1 = await flushPending();
     assert.strictEqual(f1.held, true, 'flush does nothing during quiet hours');
     _setClock(() => new Date('2026-10-16T04:30:00Z')); // 07:30 Riyadh
@@ -368,6 +368,44 @@ function ev(method, { body, query, cookie } = {}) {
     assert.strictEqual(f2.total, 1);
     const upd = calls.find((c) => /UPDATE notification_log SET status = :st/.test(c.statementText));
     assert.strictEqual(upd.binds.find((b) => b.name === 'st').value, 'SKIPPED_NO_DEVICE');
+    _setClock(null);
+  });
+
+  await t('7:30 rule: a future day is hidden from the public and staff, visible to the CIC', async () => {
+    responder = () => rows([{ LOG_ID: 1, STAFF_ID: 5, STAFF_NAME: 'Haifa', SESSION_CODE: 'AM', TYPE_CODE: 'CLINIC' }]);
+    let r = await F('board')(ev('GET', { query: { date: '2030-01-06' } }));
+    let b = JSON.parse(r.body);
+    assert.strictEqual(b.hidden, true); assert.deepStrictEqual(b.assignments, []);
+    assert.strictEqual(calls.length, 0, 'no database read for hidden days');
+    assert.match(r.headers['Netlify-Vary'], /cookie=endo_session/);
+    r = await F('board')(ev('GET', { cookie: staff, query: { date: '2030-01-06', live: '1' } }));
+    assert.strictEqual(JSON.parse(r.body).hidden, true, 'staff too');
+    r = await F('board')(ev('GET', { cookie: cic, query: { date: '2030-01-06', live: '1' } }));
+    b = JSON.parse(r.body);
+    assert.strictEqual(b.hidden, undefined); assert.strictEqual(b.assignments.length, 1, 'CIC sees ahead');
+    r = await F('board')(ev('GET', { query: { date: '2020-01-05' } }));
+    assert.strictEqual(JSON.parse(r.body).hidden, undefined, 'past days are visible');
+    r = await F('duties')(ev('GET', { cookie: staff, query: { date: '2030-01-06' } }));
+    assert.strictEqual(JSON.parse(r.body).hidden, true, 'duties hidden too');
+  });
+
+  await t('notifications about a future day wait until 07:30 on that day', async () => {
+    const { notifyStaff, flushPending, _setClock } = require('../netlify/functions/lib/push');
+    _setClock(() => new Date('2026-10-15T10:00:00Z')); // Thu 13:00 Riyadh, working hours
+    responder = (sql) => /COUNT\(\*\) AS n/.test(sql) ? rows([{ N: 0 }]) : done();
+    const r = await notifyStaff(5, { eventType: 'SCHEDULE_CHANGE', title: 'T', body: 'B', dedupeKey: 'NB1', notBefore: '2026-10-18 07:30' });
+    assert.strictEqual(r.status, 'QUEUED');
+    const pending = [{ NOTIFICATION_ID: 3, STAFF_ID: 5, IS_OLD: 'N', MESSAGE_BODY: JSON.stringify({ title: 'T', body: 'B', notBefore: '2026-10-18 07:30' }) }];
+    _setClock(() => new Date('2026-10-16T04:30:00Z')); // Fri 07:30 — not its day yet
+    calls.length = 0;
+    responder = (sql) => /status = 'PENDING' AND channel/.test(sql) ? rows(pending) : done();
+    await flushPending();
+    assert(!calls.some((c) => /SET status = :st/.test(c.statementText)), 'still waiting');
+    _setClock(() => new Date('2026-10-18T04:30:00Z')); // Sun 07:30 — deliver
+    calls.length = 0;
+    responder = (sql) => /status = 'PENDING' AND channel/.test(sql) ? rows(pending) : /push_subscriptions/.test(sql) ? rows([]) : done();
+    await flushPending();
+    assert(calls.some((c) => /SET status = :st/.test(c.statementText)), 'delivered on the day');
     _setClock(null);
   });
 

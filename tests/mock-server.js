@@ -73,6 +73,7 @@ function extraApi(req, res, p, q, body, need) {
     const date = q.date || body.date;
     const dow = new Date(date + 'T12:00:00Z').getUTCDay();
     if (req.method === 'GET' && (dow === 5 || dow === 6)) { send(res, 200, { date, closed: true }); return true; }
+    if (req.method === 'GET' && !(session && session.role === 'ADMIN') && date > today) { send(res, 200, { date, hidden: true }); return true; }
     const queue = [...staff.filter((s) => s.staff_type === 'DENTAL_ASSISTANT').map((s, i) => ({ rotation_code: 'INSTRUMENTS', staff_id: s.staff_id, staff_name: s.display_name, queue_position: i + 1 })),
       ...staff.filter((s) => s.staff_type === 'STAFF_NURSE').map((s, i) => ({ rotation_code: 'CRASH_CART', staff_id: s.staff_id, staff_name: s.display_name, queue_position: i + 1 }))];
     const board = current().filter((r) => r.work_date === date);
@@ -169,7 +170,8 @@ function apiHandler(req, res, url, body) {
     case 'logout': session = null; return send(res, 200, { ok: true });
     case 'change-password': session.mustChange = false; return send(res, 200, { user: session });
     case 'reference': return send(res, 200, { clinics, categories, doctors, staff, types, sessions: [] });
-    case 'board': return send(res, 200, { date: q.date, assignments: current().filter((r) => r.work_date === q.date) });
+    case 'board': if (!(session && session.role === 'ADMIN') && q.date > today) return send(res, 200, { date: q.date, hidden: true, assignments: [] });
+      return send(res, 200, { date: q.date, assignments: current().filter((r) => r.work_date === q.date) });
     case 'assign': {
       if (!need()) return;
       const out = [];

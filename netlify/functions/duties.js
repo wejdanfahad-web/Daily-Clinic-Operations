@@ -3,7 +3,7 @@
 // POST /api/duties (CIC)
 //   { action: "record", date }                          record today's/that day's picks now
 //   { action: "set", date, slot: "INST_AM"|"INST_PM"|"CRASH", staff_id, replace_log_id }   manual change
-const { readSession, handler, json, cachedJson, parseBody, HttpError, isIsoDate, riyadhToday, requireCic } = require('./lib/http');
+const { readSession, handler, json, cachedJson, parseBody, HttpError, isIsoDate, riyadhToday, requireCic, releasedToStaff, STAFF_RELEASE } = require('./lib/http');
 const { computeDuties, recordDuties } = require('./lib/duties');
 const { writeEntries } = require('./lib/assignments');
 const { notifyStaff } = require('./lib/push');
@@ -15,9 +15,10 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
     const date = (event.queryStringParameters || {}).date || riyadhToday();
     if (!isIsoDate(date)) throw new HttpError(400, 'date must be YYYY-MM-DD.');
     if (!isWorkday(date)) return cachedJson({ date, closed: true }, 300);
-    const d = await computeDuties(date);
     const s = readSession(event);
     const cic = s && s.role === 'ADMIN';
+    if (!cic && !releasedToStaff(date)) return cachedJson({ date, hidden: true, visible_from: `${date} ${STAFF_RELEASE}` }, 30);
+    const d = await computeDuties(date);
     const body = { date, instruments: d.instruments, crash: d.crash, allRecorded: d.allRecorded, skipped: cic ? d.skipped : undefined };
     return cic ? json(200, body) : cachedJson(body, 60);
   }
@@ -41,7 +42,7 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
     entries.push({ session: slot === 'INST_PM' ? 'PM' : 'AM', staff_id: sid, type_code: slot === 'CRASH' ? 'CRASH_CART' : 'INSTRUMENTS', notes: 'set by CIC' });
     await writeEntries({ workDate: b.date, entries, recordedBy: by });
     const label = slot === 'CRASH' ? 'Crash cart check before 8:30' : slot === 'INST_AM' ? 'AM instruments from CSSD at 8:40' : 'PM instruments from CSSD at 12:40';
-    await notifyStaff(sid, { eventType: 'DAILY_DUTY', title: 'Daily duty', body: `${b.date}: ${label}`, url: `/#/assign/${b.date}`, dedupeKey: `DUTY:${b.date}:${slot}:${sid}:${Date.now()}` });
+    await notifyStaff(sid, { eventType: 'DAILY_DUTY', title: 'Your duty today', body: label, url: `/#/assign/${b.date}`, dedupeKey: `DUTY:${b.date}:${slot}:${sid}:${Date.now()}`, notBefore: `${b.date} 07:30` });
     return json(200, { ok: true, duties: await computeDuties(b.date) });
   }
   throw new HttpError(400, 'Unknown action.');
