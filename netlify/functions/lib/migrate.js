@@ -99,6 +99,28 @@ BEGIN
   COMMIT;
 END;`,
   },
+  {
+    id: '12_more_machines',
+    optional: true,
+    done: `SELECT COUNT(*) AS n FROM equipment_catalog WHERE UPPER(item_name) = 'EPT' AND item_kind = 'MACHINE' AND list_status = 'STANDARD'`,
+    run: `
+DECLARE
+  TYPE t_names IS TABLE OF VARCHAR2(60);
+  l_all t_names := t_names('Endo Activator', 'EPT');
+BEGIN
+  FOR i IN 1 .. l_all.COUNT LOOP
+    UPDATE equipment_catalog SET list_status = 'STANDARD', is_active = 'Y', item_name = l_all(i), updated_at = SYSTIMESTAMP
+     WHERE UPPER(item_name) = UPPER(l_all(i)) AND item_kind = 'MACHINE';
+    IF SQL%ROWCOUNT = 0 THEN
+      BEGIN
+        INSERT INTO equipment_catalog (item_name, item_kind, requires_ppm, list_status) VALUES (l_all(i), 'MACHINE', 'N', 'STANDARD');
+      EXCEPTION WHEN DUP_VAL_ON_INDEX THEN NULL;
+      END;
+    END IF;
+  END LOOP;
+  COMMIT;
+END;`,
+  },
 ];
 
 let ready = null;
