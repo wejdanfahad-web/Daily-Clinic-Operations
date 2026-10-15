@@ -21,7 +21,7 @@ DECLARE
   TYPE t_names IS TABLE OF VARCHAR2(60);
   l_all t_names := t_names('Dental Chair', 'X-ray Unit', 'Microscope', 'X Smart Plus', 'X Smart Plus Handpiece', 'Apex Locator',
                            'Beta Gun', 'Beta Charging Stand', 'Alpha', 'Amalgamator', 'Adult Sensor', 'PEDO Sensor',
-                           'P5 Ultrasonic', 'Wireless Light Cure', 'Wired Light Cure', 'Intraoral Camera');
+                           'P5 Ultrasonic', 'Wireless Light Cure', 'Wired Light Cure', 'Intraoral Camera', 'Endo Activator');
 BEGIN
   FOR i IN 1 .. l_all.COUNT LOOP
     UPDATE equipment_catalog SET list_status = 'STANDARD', is_active = 'Y', item_name = l_all(i), updated_at = SYSTIMESTAMP
@@ -83,6 +83,20 @@ BEGIN
   BEGIN EXECUTE IMMEDIATE 'DROP INDEX eq_ppm_line_uk'; EXCEPTION WHEN OTHERS THEN IF SQLCODE <> -1418 THEN RAISE; END IF; END;
   EXECUTE IMMEDIATE 'CREATE UNIQUE INDEX eq_ppm_line2_uk ON equipment_ppm (clinic_id, item_id, NVL(asset_tag, ''-''), NVL(UPPER(serial_no), ''-''), NVL(responsible_staff_id, 0))';
 EXCEPTION WHEN OTHERS THEN IF SQLCODE <> -955 THEN RAISE; END IF;
+END;`,
+  },
+  {
+    id: '12_machine_endo_activator',
+    optional: true,
+    done: `SELECT COUNT(*) AS n FROM equipment_catalog WHERE UPPER(item_name) = 'ENDO ACTIVATOR' AND list_status = 'STANDARD'`,
+    run: `
+BEGIN
+  UPDATE equipment_catalog SET list_status = 'STANDARD', is_active = 'Y', item_name = 'Endo Activator', updated_at = SYSTIMESTAMP
+   WHERE UPPER(item_name) = 'ENDO ACTIVATOR';
+  IF SQL%ROWCOUNT = 0 THEN
+    INSERT INTO equipment_catalog (item_name, item_kind, requires_ppm, list_status) VALUES ('Endo Activator', 'MACHINE', 'N', 'STANDARD');
+  END IF;
+  COMMIT;
 END;`,
   },
 ];

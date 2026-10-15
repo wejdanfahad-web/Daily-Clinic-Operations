@@ -82,6 +82,11 @@
       "requires_ppm": "N"
     },
     {
+      "item_kind": "MACHINE",
+      "item_name": "Endo Activator",
+      "requires_ppm": "N"
+    },
+    {
       "item_kind": "INSTRUMENT",
       "item_name": "Apex Locator tips",
       "requires_ppm": "N"
