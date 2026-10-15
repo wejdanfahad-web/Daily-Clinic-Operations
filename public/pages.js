@@ -50,7 +50,7 @@ function entryEditor({ title, entries, homeClinic, staffList, onSave, onMove }) 
     const groups = { CLINICAL: 'Clinic', SURGERY: 'Surgery', DUTY: 'Duty', UNAVAILABLE: 'Not available' };
     for (const [cat, label] of Object.entries(groups)) {
       const og = h('optgroup', { label });
-      S.ref.types.filter((t) => t.category === cat).forEach((t) => og.appendChild(h('option', { value: t.type_code }, t.type_name)));
+      S.ref.types.filter((t) => t.category === cat && !DUTY_TYPES.includes(t.type_code)).forEach((t) => og.appendChild(h('option', { value: t.type_code }, t.type_name)));
       typeSel.appendChild(og);
     }
     const docOpts = () => [h('option', { value: '' }, 'Choose…'), ...S.ref.doctors.map((d) => h('option', { value: d.doctor_id }, `${d.display_name}${d.category_code ? ' · ' + d.category_code : ''}`))];
@@ -163,7 +163,7 @@ function autoPlan() {
 
 function boardAsDraft(rows) {
   const out = {};
-  for (const g of groupsFor(rows)) {
+  for (const g of groupsFor(rows.filter((r) => !DUTY_TYPES.includes(r.type_code)))) {
     const f = g[0];
     const e = { type_code: f.type_code, doctor_ids: g.map((r) => r.doctor_id).filter(Boolean).map(Number), clinic_id: f.clinic_id ? Number(f.clinic_id) : null, notes: f.notes || '' };
     for (const sess of f.session_code === 'DAY' ? ['AM', 'PM'] : [f.session_code]) {

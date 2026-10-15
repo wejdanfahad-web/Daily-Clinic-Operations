@@ -36,26 +36,24 @@ async function logNotification({ eventType, staffId, dedupeKey, status, body, re
   return true;
 }
 
-// Send one message to every active device of one staff member.
-async function notifyStaff(staffId, { eventType, title, body, url = '/', dedupeKey, equipmentId = null, assignmentLogId = null }) {
-  const key = dedupeKey || `${eventType}:${staffId}:${Date.now()}`;
-  const already = await query('SELECT COUNT(*) AS n FROM notification_log WHERE dedupe_key = :k', { k: key.slice(0, 200) });
-  if (already[0] && Number(already[0].n) > 0) return { status: 'DUPLICATE' };
+// Quiet hours: nothing is ever sent between 16:30 and 07:30 Riyadh time. Messages created then are
+// stored as PENDING and delivered by flushPending() at 07:30 (ppm-check runs it every morning).
+const QUIET_FROM = '16:30';
+const QUIET_UNTIL = '07:30';
+function riyadhClock(now = new Date()) {
+  return new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Riyadh', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(now);
+}
+let clock = () => new Date();            // replaceable in tests
+const _setClock = (fn) => { clock = fn || (() => new Date()); };
+const isQuietTime = (now = clock()) => { const t = riyadhClock(now); return t >= QUIET_FROM || t < QUIET_UNTIL; };
 
+// Push one payload to every active device of one staff member.
+async function sendToDevices(staffId, payload) {
   const subs = await query(`
     SELECT subscription_id, endpoint, p256dh_key, auth_key
       FROM push_subscriptions WHERE staff_id = :sid AND is_active = 'Y'`, { sid: staffId });
-
-  if (!subs.length) {
-    await logNotification({ eventType, staffId, dedupeKey: key, status: 'SKIPPED_NO_DEVICE', body, equipmentId, assignmentLogId });
-    return { status: 'SKIPPED_NO_DEVICE' };
-  }
-  if (!configure()) {
-    await logNotification({ eventType, staffId, dedupeKey: key, status: 'FAILED', body, error: 'VAPID keys not set', equipmentId, assignmentLogId });
-    return { status: 'FAILED' };
-  }
-
-  const payload = JSON.stringify({ title, body, url });
+  if (!subs.length) return { status: 'SKIPPED_NO_DEVICE', sent: 0, total: 0 };
+  if (!configure()) return { status: 'FAILED', sent: 0, total: subs.length, error: 'VAPID keys not set' };
   let sent = 0, lastErr = null;
   for (const s of subs) {
     try {
@@ -70,9 +68,45 @@ async function notifyStaff(staffId, { eventType, title, body, url = '/', dedupeK
       }
     }
   }
-  const status = sent ? 'SENT' : 'FAILED';
-  await logNotification({ eventType, staffId, dedupeKey: key, status, body, recipient: `${sent}/${subs.length} devices`, error: sent ? null : lastErr, equipmentId, assignmentLogId });
-  return { status, sent };
+  return { status: sent ? 'SENT' : 'FAILED', sent, total: subs.length, error: sent ? null : lastErr };
+}
+
+// Send one message to a staff member (or hold it until 07:30 during quiet hours).
+async function notifyStaff(staffId, { eventType, title, body, url = '/', dedupeKey, equipmentId = null, assignmentLogId = null }) {
+  const key = dedupeKey || `${eventType}:${staffId}:${Date.now()}`;
+  const already = await query('SELECT COUNT(*) AS n FROM notification_log WHERE dedupe_key = :k', { k: key.slice(0, 200) });
+  if (already[0] && Number(already[0].n) > 0) return { status: 'DUPLICATE' };
+
+  if (isQuietTime()) {
+    await logNotification({ eventType, staffId, dedupeKey: key, status: 'PENDING', body: JSON.stringify({ title, body, url }).slice(0, 1600), equipmentId, assignmentLogId });
+    return { status: 'QUEUED' };
+  }
+  const r = await sendToDevices(staffId, JSON.stringify({ title, body, url }));
+  await logNotification({ eventType, staffId, dedupeKey: key, status: r.status, body, recipient: r.total ? `${r.sent}/${r.total} devices` : null, error: r.error, equipmentId, assignmentLogId });
+  return { status: r.status, sent: r.sent };
+}
+
+// Deliver messages held during quiet hours. Safe to run any time; does nothing during quiet hours.
+async function flushPending() {
+  if (isQuietTime()) return { sent: 0, held: true };
+  const rows = await query(`
+    SELECT notification_id, staff_id, message_body FROM notification_log
+     WHERE status = 'PENDING' AND channel = 'PUSH' AND created_at > SYSTIMESTAMP - INTERVAL '2' DAY
+     ORDER BY created_at`, {}, { limit: 1000 });
+  let sent = 0;
+  for (const r of rows) {
+    let msg = {};
+    try { msg = JSON.parse(r.message_body || '{}'); } catch { msg = { title: 'ENDO Clinic', body: r.message_body }; }
+    const res = await sendToDevices(r.staff_id, JSON.stringify({ title: msg.title || 'ENDO Clinic', body: msg.body || '', url: msg.url || '/' }));
+    if (res.status === 'SENT') sent++;
+    await exec(`BEGIN UPDATE notification_log SET status = :st, message_body = :b, recipient = :rc, error_message = :er,
+                       sent_at = CASE WHEN :st = 'SENT' THEN SYSTIMESTAMP END WHERE notification_id = :id; COMMIT; END;`,
+    { st: res.status, b: String(msg.body || '').slice(0, 1600), rc: res.total ? `${res.sent}/${res.total} devices` : null, er: res.error ? String(res.error).slice(0, 1000) : null, id: r.notification_id });
+  }
+  // anything older than 2 days is no longer useful
+  await exec(`BEGIN UPDATE notification_log SET status = 'FAILED', error_message = 'Expired while waiting for working hours'
+               WHERE status = 'PENDING' AND created_at <= SYSTIMESTAMP - INTERVAL '2' DAY; COMMIT; END;`);
+  return { sent, total: rows.length };
 }
 
 async function notifyCic(message) {
@@ -82,4 +116,4 @@ async function notifyCic(message) {
   return out;
 }
 
-module.exports = { notifyStaff, notifyCic, logNotification };
+module.exports = { notifyStaff, notifyCic, logNotification, flushPending, isQuietTime, riyadhClock, _setClock };

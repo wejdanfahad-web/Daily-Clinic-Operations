@@ -132,7 +132,8 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
   if (date < riyadhToday()) throw new HttpError(400, 'You can\'t publish a plan for a past day. Edit the board directly instead.');
 
   const typeMap = await assignmentTypes();
-  const current = boardToDraft(await currentBoard(date));
+  // daily duties (Instruments / Crash cart) are managed by the rotation, not by the plan
+  const current = boardToDraft((await currentBoard(date)).filter((r) => !['INSTRUMENTS', 'CRASH_CART'].includes(r.type_code)));
   const draft = b.draft;
   const entries = [];
   const changedStaff = new Set();

@@ -5,9 +5,14 @@
 [functions]
   node_bundler = "esbuild"
 
-# Daily PPM check at 07:00 Riyadh (04:00 UTC). Also keeps the free database awake.
+# 07:30 Riyadh (04:30 UTC): deliver notifications held overnight, then the daily PPM check.
+# Also keeps the free database awake. No notification is ever sent between 16:30 and 07:30.
 [functions."ppm-check"]
-  schedule = "0 4 * * *"
+  schedule = "30 4 * * *"
+
+# 16:00 Riyadh (13:00 UTC), before quiet hours: record tomorrow's Instruments / Crash cart duties and notify.
+[functions."duties-cron"]
+  schedule = "0 13 * * *"
 
 # Nice API paths: /api/board → /.netlify/functions/board
 [[redirects]]

@@ -236,7 +236,8 @@ function ev(method, { body, query, cookie } = {}) {
   });
 
   await t('push: staff with no phone registered is logged SKIPPED_NO_DEVICE', async () => {
-    const { notifyStaff } = require('../netlify/functions/lib/push');
+    const { notifyStaff, _setClock } = require('../netlify/functions/lib/push');
+    _setClock(() => new Date('2026-10-15T07:00:00Z')); // 10:00 Riyadh
     responder = (sql) => /COUNT\(\*\) AS n/.test(sql) ? rows([{ N: 0 }]) : /push_subscriptions/.test(sql) ? rows([]) : done();
     const r = await notifyStaff(5, { eventType: 'PPM_DUE', title: 't', body: 'b', dedupeKey: 'K1' });
     assert.strictEqual(r.status, 'SKIPPED_NO_DEVICE');
@@ -305,6 +306,69 @@ function ev(method, { body, query, cookie } = {}) {
     assert.strictEqual(blk.binds.find((b) => b.name === 'n').value, 'Dr. Abdullah Albaz');
     assert.strictEqual(blk.binds.find((b) => b.name === 'c').value, 'PG1');
     assert.strictEqual(blk.binds.find((b) => b.name === 'a').value, 'abdullah albaz');
+  });
+
+  await t('duties: skip not-available and Vitals, AM/PM different people, CIC fills crash cart gap', async () => {
+    const { pick } = require('../netlify/functions/lib/duties');
+    const queue = [
+      { rotation_code: 'INSTRUMENTS', staff_id: 1, staff_name: 'Rhoda', queue_position: 1 },
+      { rotation_code: 'INSTRUMENTS', staff_id: 2, staff_name: 'Saada', queue_position: 2 },
+      { rotation_code: 'INSTRUMENTS', staff_id: 3, staff_name: 'Nawal', queue_position: 3 },
+      { rotation_code: 'INSTRUMENTS', staff_id: 6, staff_name: 'Raniya', queue_position: 4 },
+      { rotation_code: 'CRASH_CART', staff_id: 4, staff_name: 'Victoria', queue_position: 1 },
+      { rotation_code: 'CRASH_CART', staff_id: 11, staff_name: 'Eman', queue_position: 2 },
+      { rotation_code: 'CRASH_CART', staff_id: 17, staff_name: 'Abdulmohsen', queue_position: 3 },
+    ];
+    const board = [
+      { staff_id: 1, session_code: 'DAY', type_code: 'ON_LEAVE', category: 'UNAVAILABLE' },   // Rhoda off all day
+      { staff_id: 2, session_code: 'AM', type_code: 'VITALS', category: 'DUTY' },             // Saada on AM vitals
+      { staff_id: 11, session_code: 'AM', type_code: 'EXCUSE', category: 'UNAVAILABLE' },     // Eman excused AM
+      { staff_id: 17, session_code: 'DAY', type_code: 'SICK_LEAVE', category: 'UNAVAILABLE' },
+    ];
+    const r = pick({ queue, board, cic: { staff_id: 99, display_name: 'Wejdan' } });
+    assert.strictEqual(r.instruments.AM.name, 'Nawal', 'Rhoda off, Saada on AM vitals');
+    assert.strictEqual(r.instruments.PM.name, 'Saada', 'Saada keeps her place and takes PM');
+    assert.deepStrictEqual(r.crash.map((c) => c.name), ['Victoria', 'Wejdan (CIC)']);
+    assert(r.skipped.some((x) => x.name === 'Saada' && x.why === 'on Vitals'));
+    // already recorded rows win
+    const r2 = pick({ queue, board: [...board, { log_id: 9, staff_id: 6, staff_name: 'Raniya', session_code: 'AM', type_code: 'INSTRUMENTS', category: 'DUTY' }], cic: null });
+    assert.strictEqual(r2.instruments.AM.name, 'Raniya'); assert.strictEqual(r2.instruments.AM.recorded, true);
+    assert.strictEqual(r2.instruments.PM.name, 'Saada');
+  });
+
+  await t('duties: public GET hides who was passed over', async () => {
+    responder = (sql) => /v_rotation_queue/.test(sql) ? rows([{ ROTATION_CODE: 'INSTRUMENTS', STAFF_ID: 1, STAFF_NAME: 'Rhoda', QUEUE_POSITION: 1 }]) : rows([]);
+    const r = await F('duties')(ev('GET', { query: { date: '2030-01-06' } }));
+    assert.strictEqual(r.statusCode, 200);
+    const b = JSON.parse(r.body);
+    assert.strictEqual(b.instruments.AM.name, 'Rhoda');
+    assert.strictEqual(b.skipped, undefined);
+  });
+
+  await t('quiet hours: nothing sent 16:30–07:30, held as PENDING, delivered at 07:30', async () => {
+    const { notifyStaff, flushPending, isQuietTime, _setClock } = require('../netlify/functions/lib/push');
+    assert.strictEqual(isQuietTime(new Date('2026-10-15T13:29:00Z')), false, '16:29 Riyadh');
+    assert.strictEqual(isQuietTime(new Date('2026-10-15T13:30:00Z')), true, '16:30 Riyadh');
+    assert.strictEqual(isQuietTime(new Date('2026-10-15T04:29:00Z')), true, '07:29 Riyadh');
+    assert.strictEqual(isQuietTime(new Date('2026-10-15T04:30:00Z')), false, '07:30 Riyadh');
+    _setClock(() => new Date('2026-10-15T17:00:00Z')); // 20:00 Riyadh
+    responder = (sql) => /COUNT\(\*\) AS n/.test(sql) ? rows([{ N: 0 }]) : /push_subscriptions/.test(sql) ? rows([{ SUBSCRIPTION_ID: 1, ENDPOINT: 'https://x', P256DH_KEY: 'k', AUTH_KEY: 'a' }]) : done();
+    const r = await notifyStaff(5, { eventType: 'SCHEDULE_CHANGE', title: 'T', body: 'B', url: '/x', dedupeKey: 'Q1' });
+    assert.strictEqual(r.status, 'QUEUED');
+    assert(!calls.some((c) => /push_subscriptions/.test(c.statementText)), 'no device lookup / send at night');
+    const ins = calls.find((c) => /INSERT INTO notification_log/.test(c.statementText));
+    assert.strictEqual(ins.binds.find((b) => b.name === 'st').value, 'PENDING');
+    assert.deepStrictEqual(JSON.parse(ins.binds.find((b) => b.name === 'body').value), { title: 'T', body: 'B', url: '/x' });
+    const f1 = await flushPending();
+    assert.strictEqual(f1.held, true, 'flush does nothing during quiet hours');
+    _setClock(() => new Date('2026-10-16T04:30:00Z')); // 07:30 Riyadh
+    calls.length = 0;
+    responder = (sql) => /status = 'PENDING' AND channel/.test(sql) ? rows([{ NOTIFICATION_ID: 7, STAFF_ID: 5, MESSAGE_BODY: '{"title":"T","body":"B","url":"/x"}' }]) : /push_subscriptions/.test(sql) ? rows([]) : done();
+    const f2 = await flushPending();
+    assert.strictEqual(f2.total, 1);
+    const upd = calls.find((c) => /UPDATE notification_log SET status = :st/.test(c.statementText));
+    assert.strictEqual(upd.binds.find((b) => b.name === 'st').value, 'SKIPPED_NO_DEVICE');
+    _setClock(null);
   });
 
   await t('wrong HTTP method → 405', async () => {

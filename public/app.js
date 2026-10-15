@@ -79,6 +79,7 @@ const S = {
   compliance: null, appraisals: null, staffAdmin: null, staffMsg: null,
 };
 
+const DUTY_TYPES = ['INSTRUMENTS', 'CRASH_CART'];
 const isCic = () => S.me && S.me.role === 'ADMIN' && !S.me.mustChange;
 const isStaff = () => S.me && !S.me.mustChange;
 const canEditDay = () => isCic() || (S.me && S.me.inCharge && S.date === TODAY());
@@ -252,6 +253,7 @@ function boardModel(assignments) {
   const staff = [...S.ref.staff].sort((a, b) => (a.home_clinic_id ?? 999) - (b.home_clinic_id ?? 999) || a.display_name.localeCompare(b.display_name));
   const bySid = new Map();
   for (const a of assignments) {
+    if (DUTY_TYPES.includes(a.type_code)) continue; // shown in the Daily duties card instead
     const k = Number(a.staff_id);
     if (!bySid.has(k)) bySid.set(k, []);
     bySid.get(k).push(a);
@@ -361,6 +363,7 @@ async function renderAssign(app) {
   const side = h('div', { class: 'side' });
   app.appendChild(h('div', { class: 'daily' }, board, side));
 
+  side.appendChild(await dutiesCard(date));
   if (isStaff()) side.appendChild(notifyCard());
   side.appendChild(findMyClinicCard());
   side.appendChild(bookSurgeryCard());
@@ -403,7 +406,7 @@ function editCell(m, sess) {
     const groups = { CLINICAL: 'Clinic', SURGERY: 'Surgery', DUTY: 'Duty', UNAVAILABLE: 'Not available' };
     for (const [cat, label] of Object.entries(groups)) {
       const og = h('optgroup', { label });
-      S.ref.types.filter((t) => t.category === cat).forEach((t) => og.appendChild(h('option', { value: t.type_code }, t.type_name)));
+      S.ref.types.filter((t) => t.category === cat && !DUTY_TYPES.includes(t.type_code)).forEach((t) => og.appendChild(h('option', { value: t.type_code }, t.type_name)));
       typeSel.appendChild(og);
     }
     const docOpts = () => [h('option', { value: '' }, 'Choose…'), ...S.ref.doctors.map((d) => h('option', { value: d.doctor_id }, `${d.display_name}${d.category_code ? ' · ' + d.category_code : ''}`))];
@@ -470,6 +473,54 @@ function editCell(m, sess) {
 async function refreshBoard() {
   S.board = null; S.history = null; S.boardsCache = {};
   render();
+}
+
+// ---------- daily duties: Instruments (AM/PM) + Crash cart, auto-rotated
+const instIcon = () => svg(['M16 3a5 5 0 1 1 0 10 5 5 0 0 1 0-10z', 'M12.4 11.6 9.5 14.5', 'M9.5 14.5 3.8 20.2', 'M10.3 15.3 4.6 21'], 20);
+const heartIcon = () => svg(['M20.4 12.6A5 5 0 0 0 12 6.3a5 5 0 0 0-8.4 6.3L12 21l8.4-8.4z', 'M3 12h4l1.5-3 2.5 6 2-4.5 1 1.5h7'], 20);
+async function dutiesCard(date) {
+  const card = h('section', { class: 'card pad', 'aria-label': 'Daily duties' });
+  const day = isWeekend(date) ? nextWorkday(date) : date;
+  const next = nextWorkday(day);
+  let d, n;
+  try { [d, n] = await Promise.all([api('duties?date=' + day), api('duties?date=' + next)]); }
+  catch (e) { card.append(h('h2', null, 'Daily duties'), h('div', { class: 'msg bad' }, e.message)); return card; }
+  card.appendChild(h('div', { class: 'row-between' }, h('h2', null, 'Daily duties · ' + fmtDay(day)), h('span', { class: 'pill teal' }, 'AUTO-ROTATED')));
+  const cic = isCic();
+  const staffOpts = (type) => S.ref.staff.filter((s) => s.staff_type === type && s.employment_status === 'ACTIVE');
+  const change = (slot, current, type) => {
+    if (!cic || day < TODAY()) return null;
+    const sel = h('select', { class: 'in', style: { height: '32px', width: 'auto', fontSize: '12px' }, 'aria-label': 'Change' }, h('option', { value: '' }, 'Change…'), staffOpts(type).map((s) => h('option', { value: s.staff_id }, s.display_name)));
+    sel.addEventListener('change', async () => {
+      if (!sel.value) return;
+      try {
+        await api('duties', { method: 'POST', body: { action: 'set', date: day, slot, staff_id: Number(sel.value), replace_log_id: current && current.recorded ? current.log_id : null, replace_staff_id: current ? current.staff_id : null } });
+        toast('Duty changed and the staff member notified.'); render();
+      } catch (e) { toast(e.message); }
+    });
+    return sel;
+  };
+  const person = (p, slotLabel, dark) => h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '8px', minHeight: '36px', padding: slotLabel ? '0 14px 0 6px' : '0 14px', borderRadius: '8px', background: dark ? '#16302F' : '#FBE3E1', color: dark ? '#F3F4F1' : '#7A1E2C', fontWeight: 600 } },
+    slotLabel ? h('span', { style: { fontFamily: 'var(--mono)', fontSize: '11px', padding: '3px 6px', borderRadius: '5px', background: '#9FD8CF', color: '#0C2B29' } }, slotLabel) : null,
+    p ? p.name : 'Nobody available', p && p.nowUnavailable ? h('span', { title: 'Now marked not available', style: { color: '#F6DE6A' } }, ' ⚠') : null);
+  if (d.closed) { card.appendChild(h('div', { class: 'note' }, 'No clinics that day.')); return card; }
+  card.appendChild(h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', color: '#0E6B66' } }, instIcon(), h('b', { style: { color: '#17262B' } }, 'Instruments'), h('span', { class: 'note' }, '· dental assistants · CSSD 8:40 / 12:40')),
+    h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' } },
+      person(d.instruments.AM, 'AM', true), change('INST_AM', d.instruments.AM, 'DENTAL_ASSISTANT'),
+      person(d.instruments.PM, 'PM', true), change('INST_PM', d.instruments.PM, 'DENTAL_ASSISTANT'))));
+  card.appendChild(h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid #E6E9E4', paddingTop: '12px' } },
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', color: '#9B1C13' } }, heartIcon(), h('b', { style: { color: '#17262B' } }, 'Crash cart check'), h('span', { class: 'note' }, '· staff nurses · before 8:30')),
+    h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' } }, d.crash.map((c) => [person(c, null, false), change('CRASH', c, 'STAFF_NURSE')]))));
+  if (cic && d.skipped && d.skipped.length) card.appendChild(h('div', { class: 'note' }, 'CIC only · turn passed over: ' + d.skipped.map((x) => `${x.name} (${x.duty}, ${x.why})`).join(', ')));
+  if (cic && !d.allRecorded && day >= TODAY()) card.appendChild(h('div', { class: 'row-between' },
+    h('span', { class: 'note' }, 'Preview · confirmed automatically at 4 PM the day before'),
+    h('button', { type: 'button', class: 'btn small', onclick: async () => { try { await api('duties', { method: 'POST', body: { action: 'record', date: day } }); toast('Duties recorded.'); render(); } catch (e) { toast(e.message); } } }, 'Confirm now')));
+  if (!n.closed) card.appendChild(h('div', { style: { background: '#F7F8F6', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: '#3E4B48' } },
+    `Next (${fmtDay(next)}): instruments `, h('b', null, `AM ${n.instruments.AM ? n.instruments.AM.name : '—'} · PM ${n.instruments.PM ? n.instruments.PM.name : '—'}`),
+    ' · crash cart ', h('b', null, n.crash.map((c) => c.name).join(' & ') || '—')));
+  card.appendChild(h('div', { class: 'hint' }, 'Fair rotation through everyone in turn. Anyone not available that session, or on Vitals (instruments only), is passed over and keeps her place. Each person gets a phone notification at 4 PM the day before. No notifications are sent after 4:30 PM.'));
+  return card;
 }
 
 // ---------- notifications card (signed-in staff)

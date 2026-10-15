@@ -27,7 +27,7 @@ const staff = staffNames.map((n, i) => ({ staff_id: i + 1, display_name: n, home
 const clinics = Array.from({ length: 18 }, (_, i) => ({ clinic_id: i + 2, clinic_name: 'Clinic ' + (i + 2) }));
 const types = [
   ['CLINIC', 'Clinic (with doctor)', 'CLINICAL', 'Y'], ['PEDO', 'PEDO clinic', 'CLINICAL', 'Y'], ['SURGERY', 'Surgery', 'SURGERY', 'Y'],
-  ['VITALS', 'Vitals', 'DUTY', 'N'], ['IN_CHARGE', 'In charge (team leader duties)', 'DUTY', 'N'], ['FLOATER', 'Floater', 'DUTY', 'N'], ['STORE', 'Store', 'DUTY', 'N'],
+  ['VITALS', 'Vitals', 'DUTY', 'N'], ['INSTRUMENTS', 'Instruments duty', 'DUTY', 'N'], ['CRASH_CART', 'Crash cart check', 'DUTY', 'N'], ['IN_CHARGE', 'In charge (team leader duties)', 'DUTY', 'N'], ['FLOATER', 'Floater', 'DUTY', 'N'], ['STORE', 'Store', 'DUTY', 'N'],
   ['ON_LEAVE', 'On leave', 'UNAVAILABLE', 'N'], ['EXCUSE', 'Excuse', 'UNAVAILABLE', 'N'], ['SICK_LEAVE', 'Sick leave (SL)', 'UNAVAILABLE', 'N'],
 ].map(([type_code, type_name, category, needs_doctor], i) => ({ type_code, type_name, category, needs_doctor, sort_order: i }));
 const T = Object.fromEntries(types.map((t) => [t.type_code, t]));
@@ -68,6 +68,24 @@ let leave = [{ leave_id: 1, staff_id: 4, staff_name: 'Victoria', from_date: '202
 let eqSeq = 0; const equipment = [];
 function extraApi(req, res, p, q, body, need) {
   const wdOf = (iso) => new Date(iso + 'T12:00:00Z').getUTCDay();
+  if (p === 'duties') {
+    const { pick } = require('../netlify/functions/lib/duties');
+    const date = q.date || body.date;
+    const dow = new Date(date + 'T12:00:00Z').getUTCDay();
+    if (req.method === 'GET' && (dow === 5 || dow === 6)) { send(res, 200, { date, closed: true }); return true; }
+    const queue = [...staff.filter((s) => s.staff_type === 'DENTAL_ASSISTANT').map((s, i) => ({ rotation_code: 'INSTRUMENTS', staff_id: s.staff_id, staff_name: s.display_name, queue_position: i + 1 })),
+      ...staff.filter((s) => s.staff_type === 'STAFF_NURSE').map((s, i) => ({ rotation_code: 'CRASH_CART', staff_id: s.staff_id, staff_name: s.display_name, queue_position: i + 1 }))];
+    const board = current().filter((r) => r.work_date === date);
+    if (req.method === 'POST') {
+      if (!need('ADMIN')) return true;
+      const d = pick({ queue, board, cic: { staff_id: 99, display_name: 'Wejdan' } });
+      if (body.action === 'record') { for (const sess of ['AM', 'PM']) if (d.instruments[sess] && !d.instruments[sess].recorded) addRow({ work_date: date, session: sess, staff_id: d.instruments[sess].staff_id, type_code: 'INSTRUMENTS' }, session.name); for (const c of d.crash) if (!c.recorded && ST[c.staff_id]) addRow({ work_date: date, session: 'AM', staff_id: c.staff_id, type_code: 'CRASH_CART' }, session.name); }
+      if (body.action === 'set') { if (body.replace_log_id) addRow({ work_date: date, session: body.slot === 'INST_PM' ? 'PM' : 'AM', staff_id: body.replace_staff_id, type_code: body.slot === 'CRASH' ? 'CRASH_CART' : 'INSTRUMENTS', action: 'CANCEL', supersedes_log_id: body.replace_log_id }, session.name); addRow({ work_date: date, session: body.slot === 'INST_PM' ? 'PM' : 'AM', staff_id: body.staff_id, type_code: body.slot === 'CRASH' ? 'CRASH_CART' : 'INSTRUMENTS' }, session.name); }
+      send(res, 200, { ok: true }); return true;
+    }
+    const d = pick({ queue, board, cic: { staff_id: 99, display_name: 'Wejdan' } });
+    send(res, 200, { date, instruments: d.instruments, crash: d.crash, allRecorded: d.allRecorded, skipped: session && session.role === 'ADMIN' ? d.skipped : undefined }); return true;
+  }
   if (p === 'planner') {
     if (!need('ADMIN')) return true;
     if (req.method === 'GET') {

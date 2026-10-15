@@ -1,12 +1,15 @@
-// Scheduled daily at 07:00 Riyadh (see netlify.toml).
+// Scheduled daily at 07:30 Riyadh (see netlify.toml). First delivers messages held overnight
+// (nothing is sent between 16:30 and 07:30), then the PPM alerts.
 // Sends push alerts for equipment whose PPM is due within 7 days (once) or overdue (every day),
 // to the clinic's staff and supervisors. Running daily also keeps the free database from
 // being auto-stopped for inactivity.
 const { query } = require('./lib/db');
-const { notifyStaff } = require('./lib/push');
+const { notifyStaff, flushPending } = require('./lib/push');
 const { riyadhToday } = require('./lib/http');
 
 exports.handler = async () => {
+  const flushed = await flushPending();
+  console.log('flushed held notifications', flushed);
   const today = riyadhToday();
   const rows = await query(`
     SELECT equipment_id, clinic_id, clinic_name, item_name, asset_tag,
