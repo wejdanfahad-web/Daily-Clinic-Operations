@@ -119,6 +119,9 @@ button.cell:hover { border-color: #C9CFC9; background: var(--soft); }
 ol.plain, ul.plain { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .find li { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 10px; align-items: baseline; font-size: 13px; padding: 6px 0; border-top: 1px solid var(--line-3); }
 .find li b { font-weight: 600; }
+.find-bottom { margin-top: 20px; }
+.find-bottom > label.f { max-width: 360px; }
+@media (min-width: 900px) { .find-bottom .find { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0 16px; } .find-bottom .find li { grid-template-columns: 1fr; gap: 2px; } }
 .booking { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line-2); }
 .booking.new { border-color: var(--bad-edge); background: #FFF7F6; }
 .booking .who2 { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
