@@ -584,8 +584,8 @@ function bookSurgeryCard() {
     send.disabled = false;
   } }, 'Send to CIC');
 
-  return h('section', { class: 'card pad', 'aria-label': 'Book a surgery' },
-    h('div', { class: 'row-between' }, h('h2', null, 'Book a surgery'), h('span', { class: 'pill surg' }, 'FOR DOCTORS')),
+  return h('section', { class: 'card pad', 'aria-label': 'Book a surgery slot' },
+    h('div', { class: 'row-between' }, h('h2', null, 'Book a surgery slot'), h('span', { class: 'pill surg' }, 'FOR DOCTORS')),
     h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Operator', op), h('label', { class: 'f' }, 'Assisted by', as)),
     h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Date', date), h('div', { class: 'f', role: 'group', 'aria-label': 'Session', style: { display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px', color: '#4F5D5A' } }, 'Session', h('div', { class: 'seg' }, segBtns))),
     h('label', { class: 'f' }, 'Note (optional, no patient details)', note), honey,
