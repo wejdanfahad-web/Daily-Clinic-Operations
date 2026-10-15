@@ -175,7 +175,8 @@ BEGIN
              WHERE EXISTS (SELECT 1 FROM clinics k WHERE k.clinic_id = j.c AND k.is_active = 'Y')) LOOP
     BEGIN
       SELECT item_id INTO l_item FROM equipment_catalog
-       WHERE UPPER(item_name) = UPPER(r.n) AND item_kind = 'MACHINE' AND list_status <> 'REMOVED' AND ROWNUM = 1;
+       WHERE UPPER(item_name) = UPPER(r.n) AND item_kind = 'MACHINE' AND ROWNUM = 1;
+      UPDATE equipment_catalog SET list_status = 'STANDARD', is_active = 'Y' WHERE item_id = l_item AND list_status = 'REMOVED';
     EXCEPTION WHEN NO_DATA_FOUND THEN
       INSERT INTO equipment_catalog (item_name, item_kind, requires_ppm, list_status)
       VALUES (r.n, 'MACHINE', CASE WHEN r.due IS NOT NULL THEN 'Y' ELSE 'N' END, 'STANDARD')
@@ -185,7 +186,7 @@ BEGIN
     BEGIN
       IF r.s IS NOT NULL THEN
         SELECT equipment_id INTO l_eq FROM equipment_ppm
-         WHERE item_id = l_item AND UPPER(serial_no) = UPPER(r.s) AND condition_status <> 'RETIRED' AND ROWNUM = 1;
+         WHERE item_id = l_item AND clinic_id = r.c AND UPPER(serial_no) = UPPER(r.s) AND condition_status <> 'RETIRED' AND ROWNUM = 1;
       ELSE
         SELECT equipment_id INTO l_eq FROM equipment_ppm
          WHERE item_id = l_item AND clinic_id = r.c AND serial_no IS NULL AND condition_status <> 'RETIRED' AND ROWNUM = 1;
@@ -197,7 +198,7 @@ BEGIN
       VALUES (r.c, l_item, r.t, r.s, 1, r.st, TO_DATE(r.lp, 'YYYY-MM-DD'), TO_DATE(r.due, 'YYYY-MM-DD'), r.by_staff, r.by_staff, :by, 'Imported from the inventory sheet');
     ELSE
       UPDATE equipment_ppm
-         SET clinic_id = r.c, asset_tag = NVL(r.t, asset_tag), condition_status = r.st,
+         SET asset_tag = NVL(r.t, asset_tag), condition_status = r.st,
              last_ppm_date = NVL(TO_DATE(r.lp, 'YYYY-MM-DD'), last_ppm_date),
              ppm_due_date  = NVL(TO_DATE(r.due, 'YYYY-MM-DD'), ppm_due_date), last_verified_by = NVL(r.by_staff, last_verified_by),
              responsible_staff_id = NVL(r.by_staff, responsible_staff_id), updated_by = :by

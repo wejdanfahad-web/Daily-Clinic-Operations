@@ -73,6 +73,18 @@ END;`,
     done: `SELECT COUNT(*) AS n FROM user_tab_columns WHERE table_name = 'EQUIPMENT_PPM' AND column_name = 'RESPONSIBLE_STAFF_ID'`,
     run: `BEGIN EXECUTE IMMEDIATE 'ALTER TABLE equipment_ppm ADD (responsible_staff_id NUMBER(10) CONSTRAINT eq_ppm_resp_fk REFERENCES staff (staff_id))'; END;`,
   },
+  {
+    id: '11_equipment_line_key',
+    // The old rule allowed only one untagged line per item per clinic, which refused a clinic with two
+    // X Smart Plus machines. A line is now unique by clinic + item + DUH # + Serial # + who is responsible.
+    done: `SELECT COUNT(*) AS n FROM user_indexes WHERE index_name = 'EQ_PPM_LINE2_UK'`,
+    run: `
+BEGIN
+  BEGIN EXECUTE IMMEDIATE 'DROP INDEX eq_ppm_line_uk'; EXCEPTION WHEN OTHERS THEN IF SQLCODE <> -1418 THEN RAISE; END IF; END;
+  EXECUTE IMMEDIATE 'CREATE UNIQUE INDEX eq_ppm_line2_uk ON equipment_ppm (clinic_id, item_id, NVL(asset_tag, ''-''), NVL(UPPER(serial_no), ''-''), NVL(responsible_staff_id, 0))';
+EXCEPTION WHEN OTHERS THEN IF SQLCODE <> -955 THEN RAISE; END IF;
+END;`,
+  },
 ];
 
 let ready = null;

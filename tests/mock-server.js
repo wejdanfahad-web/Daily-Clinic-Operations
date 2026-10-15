@@ -168,7 +168,7 @@ function extraApi(req, res, p, q, body, need) {
         if (!clinics.some((c) => c.clinic_id === r.clinic_id)) continue;
         let cat = catalog.find((x) => x.item_name.toLowerCase() === r.item_name.toLowerCase() && x.item_kind === 'MACHINE');
         if (!cat) { cat = { item_id: ++catSeq, item_name: r.item_name, item_kind: 'MACHINE', requires_ppm: r.ppm_due_date ? 'Y' : 'N', list_status: 'STANDARD' }; catalog.push(cat); }
-        const ex = equipment.find((e) => e.item_id === cat.item_id && r.serial_no && e.serial_no === r.serial_no);
+        const ex = equipment.find((e) => e.item_id === cat.item_id && e.clinic_id === r.clinic_id && r.serial_no && e.serial_no === r.serial_no);
         const due = r.ppm_due_date;
         const row = { clinic_id: r.clinic_id, item_id: cat.item_id, item_name: cat.item_name, item_kind: 'MACHINE', requires_ppm: cat.requires_ppm, list_status: 'STANDARD', serial_no: r.serial_no, asset_tag: r.asset_tag, quantity: 1,
           last_ppm_date: r.last_ppm_date, ppm_due_date: due, ppm_status: cat.requires_ppm !== 'Y' ? 'NOT_REQUIRED' : !due ? 'MISSING_DATE' : due < today ? 'OVERDUE' : 'OK',
