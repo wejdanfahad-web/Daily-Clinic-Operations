@@ -162,6 +162,7 @@ function extraApi(req, res, p, q, body, need) {
           last_ppm_date: r.last_ppm_date, ppm_due_date: due, ppm_status: cat.requires_ppm !== 'Y' ? 'NOT_REQUIRED' : !due ? 'MISSING_DATE' : due < today ? 'OVERDUE' : 'OK',
           condition_status: /non/i.test(r.status) ? 'OUT_OF_SERVICE' : 'IN_SERVICE',
           responsible_name: ({ '111942': 'Rhoda', '144058': 'Haifa', '140536': 'Sharifah' })[r.staff_no] || null };
+        row.responsible_staff_id = row.responsible_name ? staff.find((x) => x.display_name === row.responsible_name).staff_id : null;
         if (ex) Object.assign(ex, row); else equipment.push({ equipment_id: ++eqSeq, ...row });
         n++;
       }
@@ -173,11 +174,12 @@ function extraApi(req, res, p, q, body, need) {
       body.item_name = cat.item_name; body.item_id = cat.item_id;
       if (body.item_kind === 'MACHINE' && !body.serial_no) { send(res, 400, { error: 'Serial # is required for a machine.' }); return true; }
       const due = body.ppm_due_date || (body.last_ppm_date && body.ppm_interval_months ? new Date(new Date(body.last_ppm_date).setMonth(new Date(body.last_ppm_date).getMonth() + Number(body.ppm_interval_months))).toISOString().slice(0, 10) : null);
-      equipment.push({ equipment_id: ++eqSeq, clinic_id: body.clinic_id, item_id: body.item_id, requires_ppm: cat.requires_ppm || 'N', list_status: cat.list_status, item_name: body.item_name, item_kind: body.item_kind, serial_no: body.item_kind === 'MACHINE' ? body.serial_no : null, quantity: body.item_kind === 'MACHINE' ? 1 : body.quantity, last_ppm_date: body.last_ppm_date || null, ppm_due_date: due,
+      equipment.push({ equipment_id: ++eqSeq, responsible_staff_id: session.role === 'ADMIN' ? null : session.sid, responsible_name: session.role === 'ADMIN' ? null : session.name, clinic_id: body.clinic_id, item_id: body.item_id, requires_ppm: cat.requires_ppm || 'N', list_status: cat.list_status, item_name: body.item_name, item_kind: body.item_kind, serial_no: body.item_kind === 'MACHINE' ? body.serial_no : null, quantity: body.item_kind === 'MACHINE' ? 1 : body.quantity, last_ppm_date: body.last_ppm_date || null, ppm_due_date: due,
         ppm_status: cat.requires_ppm !== 'Y' ? 'NOT_REQUIRED' : !due ? 'MISSING_DATE' : due < today ? 'OVERDUE' : 'OK', condition_status: 'IN_SERVICE', last_verified_by_name: session.name, last_verified_on: today });
       send(res, 200, { ok: true }); return true;
     }
     const e = equipment.find((x) => x.equipment_id === body.equipment_id);
+    if (session.role !== 'ADMIN' && e.responsible_staff_id == null) { send(res, 403, { error: 'General machines are kept by the CIC.' }); return true; }
     if (body.action === 'update') Object.assign(e, Object.fromEntries(Object.entries(body).filter(([k]) => ['quantity', 'serial_no', 'last_ppm_date', 'ppm_due_date', 'condition_status', 'notes'].includes(k))));
     e.last_verified_by_name = session.name; e.last_verified_on = today;
     send(res, 200, { ok: true }); return true;

@@ -462,6 +462,24 @@ function ev(method, { body, query, cookie } = {}) {
     assert.strictEqual(js[2].st, 'OUT_OF_SERVICE'); assert.strictEqual(js[0].due, '2027-01-01');
   });
 
+  await t('inventory: general machines (CIC records) are read-only for staff; staff own what they add', async () => {
+    responder = (sql) => /user_tab_columns|UPPER\(item_name\) = 'MICROSCOPE'/.test(sql) ? rows([{ N: 1 }])
+      : /responsible_staff_id FROM equipment_ppm/.test(sql) ? rows([{ CLINIC_ID: 9, ITEM_KIND: 'MACHINE', RESPONSIBLE_STAFF_ID: null }])
+      : /AS n FROM dual/.test(sql) ? rows([{ N: 1 }]) : done();
+    let r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'update', equipment_id: 5, last_ppm_date: '2026-10-01' } }));
+    assert.strictEqual(r.statusCode, 403);
+    r = await F('inventory')(ev('POST', { cookie: cic, body: { action: 'update', equipment_id: 5, last_ppm_date: '2026-10-01' } }));
+    assert.strictEqual(r.statusCode, 200, r.body);
+    calls.length = 0;
+    r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'add', clinic_id: 9, item_kind: 'MACHINE', item_id: 4, serial_no: 'X1' } }));
+    assert.strictEqual(r.statusCode, 200, r.body);
+    const blk = calls.find((c) => /INSERT INTO equipment_ppm/.test(c.statementText));
+    assert.notStrictEqual(blk.binds.find((b) => b.name === 'resp').value, null, 'staff is responsible');
+    calls.length = 0;
+    r = await F('inventory')(ev('POST', { cookie: cic, body: { action: 'add', clinic_id: 9, item_kind: 'MACHINE', item_id: 4, serial_no: 'X2' } }));
+    assert.strictEqual(calls.find((c) => /INSERT INTO equipment_ppm/.test(c.statementText)).binds.find((b) => b.name === 'resp').value, null, 'CIC adds a general machine');
+  });
+
   await t('wrong HTTP method → 405', async () => {
     const r = await F('login')(ev('GET'));
     assert.strictEqual(r.statusCode, 405);

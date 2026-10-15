@@ -19,6 +19,8 @@
 //   { action: "catalog_approve", item_id }           PENDING → STANDARD
 //   { action: "catalog_merge", item_id, into_item_id }   PENDING name was a variant of a list item
 // Every change to quantity / PPM dates / status is written to EQUIPMENT_HISTORY by trigger.
+// Two lists per clinic: GENERAL machines = the CIC's records (no responsible staff; read-only for staff),
+// INDIVIDUAL = machines/instruments a staff member is responsible for (Staff ID in the sheet, or whoever added it).
 const { query, one, exec } = require('./lib/db');
 const { handler, json, parseBody, HttpError, requireUser, isIsoDate, riyadhToday } = require('./lib/http');
 const { ensureSchema } = require('./lib/migrate');
@@ -54,7 +56,7 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
                v.condition_status, TO_CHAR(v.last_ppm_date, 'YYYY-MM-DD') AS last_ppm_date,
                TO_CHAR(v.ppm_due_date, 'YYYY-MM-DD') AS ppm_due_date, v.days_remaining, v.ppm_status, c.list_status,
                v.last_verified_by_name, TO_CHAR(CAST(v.last_verified_at AT TIME ZONE 'Asia/Riyadh' AS DATE), 'YYYY-MM-DD') AS last_verified_on, v.notes,
-               rs.display_name AS responsible_name
+               ep.responsible_staff_id, rs.display_name AS responsible_name
           FROM v_equipment_status v JOIN equipment_catalog c ON c.item_id = v.item_id
           JOIN equipment_ppm ep ON ep.equipment_id = v.equipment_id
           LEFT JOIN staff rs ON rs.staff_id = ep.responsible_staff_id
@@ -264,8 +266,10 @@ END;`, {
 
   const id = Number(b.equipment_id);
   if (!id) throw new HttpError(400, 'equipment_id is required.');
-  const row = await one(`SELECT e.clinic_id, i.item_kind FROM equipment_ppm e JOIN equipment_catalog i ON i.item_id = e.item_id WHERE e.equipment_id = :id`, { id });
+  const row = await one(`SELECT e.clinic_id, i.item_kind, e.responsible_staff_id FROM equipment_ppm e JOIN equipment_catalog i ON i.item_id = e.item_id WHERE e.equipment_id = :id`, { id });
   if (!row) throw new HttpError(404, 'Item not found.');
+  // General machines (the CIC's records: master list and anything the CIC adds) are read-only for staff.
+  if (!isCic && row.responsible_staff_id == null) throw new HttpError(403, 'General machines are kept by the CIC.');
   if (!(await canEditClinic(user, Number(row.clinic_id)))) throw new HttpError(403, 'You can only update the inventory of your own clinic or the clinic you work in today.');
 
   if (b.action === 'verify') {
