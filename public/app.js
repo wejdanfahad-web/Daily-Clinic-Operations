@@ -378,10 +378,6 @@ async function renderAssign(app) {
     side.appendChild(await upcomingSurgeriesCard());
     side.appendChild(await logCard(date));
   }
-  // Find my clinic sits below everything, full width
-  const find = findMyClinicCard();
-  find.classList.add('find-bottom');
-  app.appendChild(find);
 }
 
 // ---------- CIC cell editor
