@@ -154,32 +154,35 @@ function ev(method, { body, query, cookie } = {}) {
 
   await t('bookings: past date / Friday / same doctor / honeypot refused before touching DB', async () => {
     const B = F('bookings');
-    const base = { doctor_id: 3, assisting_doctor_id: 8, session: 'AM' };
+    const base = { doctor_id: 3, assisting_doctor_id: 8, supervisor_doctor_id: 20, session: 'AM' };
     let r = await B(ev('POST', { body: { ...base, work_date: '2020-01-05' } })); assert.match(JSON.parse(r.body).error, /passed/);
     r = await B(ev('POST', { body: { ...base, work_date: '2030-01-04' } })); assert.match(JSON.parse(r.body).error, /Friday/); // 2030-01-04 is a Friday
     r = await B(ev('POST', { body: { ...base, assisting_doctor_id: 3, work_date: '2030-01-06' } })); assert.match(JSON.parse(r.body).error, /different doctor/);
     r = await B(ev('POST', { body: { ...base, work_date: '2030-01-06', website: 'spam' } })); assert.strictEqual(r.statusCode, 400);
+    r = await B(ev('POST', { body: { ...base, supervisor_doctor_id: null, work_date: '2030-01-06' } })); assert.match(JSON.parse(r.body).error, /case supervisor/);
     assert.strictEqual(calls.length, 0);
   });
 
   await t('bookings: rule error from DB is shown to the doctor as-is', async () => {
     responder = () => oraErr('ORA-20031: Both surgery slots on Sun 06 Jan · AM are taken. Please pick another session.\nORA-06512: at line 17');
-    const r = await F('bookings')(ev('POST', { body: { doctor_id: 3, assisting_doctor_id: 8, session: 'AM', work_date: '2030-01-06' } }));
+    const r = await F('bookings')(ev('POST', { body: { doctor_id: 3, assisting_doctor_id: 8, supervisor_doctor_id: 20, session: 'AM', work_date: '2030-01-06' } }));
     assert.strictEqual(r.statusCode, 400);
     assert.strictEqual(JSON.parse(r.body).error, 'Both surgery slots on Sun 06 Jan · AM are taken. Please pick another session.');
   });
 
   await t('bookings: the booking block checks 2/session, 3/day and doctor clashes under a lock', async () => {
-    responder = (sql) => /display_name FROM doctors/.test(sql) ? rows([{ DOCTOR_ID: 3, DISPLAY_NAME: 'Dr. Yazeed' }, { DOCTOR_ID: 8, DISPLAY_NAME: 'Dr. Muhannad' }])
+    responder = (sql) => /display_name FROM doctors/.test(sql) ? rows([{ DOCTOR_ID: 3, DISPLAY_NAME: 'Dr. Yazeed' }, { DOCTOR_ID: 8, DISPLAY_NAME: 'Dr. Muhannad' }, { DOCTOR_ID: 20, DISPLAY_NAME: 'Prof. Ahmed' }])
       : /notification_log|push_subscriptions|app_role = 'ADMIN'/.test(sql) ? rows([]) : done();
-    const r = await F('bookings')(ev('POST', { body: { doctor_id: 3, assisting_doctor_id: 8, session: 'pm', work_date: '2030-01-06', note: 'needs microscope' } }));
+    const r = await F('bookings')(ev('POST', { body: { doctor_id: 3, assisting_doctor_id: 8, supervisor_doctor_id: 20, session: 'pm', work_date: '2030-01-06', note: 'perio collab' } }));
     assert.strictEqual(r.statusCode, 200, r.body);
     const blk = calls[0];
     assert.match(blk.statementText, /FOR UPDATE/);
     assert.strictEqual(blk.binds.find((b) => b.name === 'per_sess').value, 2);
     assert.strictEqual(blk.binds.find((b) => b.name === 'per_day').value, 3);
     assert.strictEqual(blk.binds.find((b) => b.name === 's').value, 'PM');
-    assert.match(JSON.parse(r.body).message, /Dr\. Yazeed \(assisted by Dr\. Muhannad\)/);
+    assert.strictEqual(blk.binds.find((b) => b.name === 'sup').value, 20);
+    assert.match(blk.statementText, /category_code = 'FC'/);
+    assert.match(JSON.parse(r.body).message, /Dr\. Yazeed \(assisted by Dr\. Muhannad, supervisor Prof\. Ahmed\)/);
   });
 
   await t('assign: staff not in charge → 403', async () => {

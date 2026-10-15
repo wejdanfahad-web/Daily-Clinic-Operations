@@ -78,9 +78,10 @@ function apiHandler(req, res, url, body) {
     case 'bookings':
       if (req.method === 'POST') {
         if (body.doctor_id === body.assisting_doctor_id) return send(res, 400, { error: 'The assisting doctor must be a different doctor.' });
+        if (!body.supervisor_doctor_id) return send(res, 400, { error: 'Choose the case supervisor.' });
         const n = bookings.filter((b) => b.work_date === body.work_date && b.session_code === body.session && b.status !== 'CANCELLED').length;
         if (n >= 2) return send(res, 400, { error: 'Both surgery slots are taken. Please pick another session.' });
-        bookings.push({ booking_id: bookings.length + 1, work_date: body.work_date, session_code: body.session, note: body.note, status: 'NEW', doctor_id: body.doctor_id, doctor_name: D[body.doctor_id].display_name, doctor_category: D[body.doctor_id].category_code, assisting_doctor_name: D[body.assisting_doctor_id].display_name, assisting_category: D[body.assisting_doctor_id].category_code });
+        bookings.push({ booking_id: bookings.length + 1, work_date: body.work_date, session_code: body.session, note: body.note, status: 'NEW', doctor_id: body.doctor_id, doctor_name: D[body.doctor_id].display_name, doctor_category: D[body.doctor_id].category_code, assisting_doctor_name: D[body.assisting_doctor_id].display_name, assisting_category: D[body.assisting_doctor_id].category_code, supervisor_name: D[body.supervisor_doctor_id].display_name });
         return send(res, 200, { ok: true, message: `Sent. The CIC has been notified about ${D[body.doctor_id].display_name} · ${body.work_date} · ${body.session}.` });
       }
       if (q.list) { if (!need('ADMIN')) return; return send(res, 200, { bookings: bookings.filter((b) => b.status !== 'CANCELLED') }); }

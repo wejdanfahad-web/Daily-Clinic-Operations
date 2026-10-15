@@ -554,6 +554,7 @@ function bookSurgeryCard() {
   const docOpts = (first) => [h('option', { value: '' }, first), ...S.ref.doctors.map((d) => h('option', { value: d.doctor_id }, d.display_name))];
   const op = h('select', { class: 'in' }, docOpts('Choose…'));
   const as = h('select', { class: 'in' }, docOpts('Choose…'));
+  const sup = h('select', { class: 'in' }, h('option', { value: '' }, 'Choose…'), S.ref.doctors.filter((d) => d.category_code === 'FC').map((d) => h('option', { value: d.doctor_id }, d.display_name)));
   const date = h('input', { class: 'in', type: 'date', min: TODAY() });
   const note = h('input', { class: 'in', maxlength: 120, placeholder: 'e.g. apicoectomy, perio collab' });
   const honey = h('input', { type: 'text', name: 'website', tabindex: '-1', autocomplete: 'off', class: 'sr-only', 'aria-hidden': 'true' });
@@ -576,7 +577,7 @@ function bookSurgeryCard() {
     err.hidden = true; ok.hidden = true;
     send.disabled = true;
     try {
-      const r = await api('bookings', { method: 'POST', body: { doctor_id: Number(op.value), assisting_doctor_id: Number(as.value), work_date: date.value, session: sess, note: note.value, website: honey.value } });
+      const r = await api('bookings', { method: 'POST', body: { doctor_id: Number(op.value), assisting_doctor_id: Number(as.value), supervisor_doctor_id: Number(sup.value), work_date: date.value, session: sess, note: note.value, website: honey.value } });
       ok.textContent = r.message; ok.hidden = false;
       note.value = ''; date.dispatchEvent(new Event('change'));
       if (isCic()) { S.bookings = null; render(); }
@@ -587,6 +588,7 @@ function bookSurgeryCard() {
   return h('section', { class: 'card pad', 'aria-label': 'Book a surgery slot' },
     h('div', { class: 'row-between' }, h('h2', null, 'Book a surgery slot'), h('span', { class: 'pill surg' }, 'FOR DOCTORS')),
     h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Operator', op), h('label', { class: 'f' }, 'Assisted by', as)),
+    h('label', { class: 'f' }, 'Case Supervisor (faculty)', sup),
     h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Date', date), h('div', { class: 'f', role: 'group', 'aria-label': 'Session', style: { display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px', color: '#4F5D5A' } }, 'Session', h('div', { class: 'seg' }, segBtns))),
     h('label', { class: 'f' }, 'Note (optional, no patient details)', note), honey,
     slots, err, send, ok);
@@ -622,6 +624,7 @@ async function upcomingSurgeriesCard() {
         h('span', { class: 'catchip', style: catStyle(b.doctor_category) }, catLabel(b.doctor_category)), b.doctor_name,
         h('span', { class: 'note' }, '· assisted by'),
         h('span', { class: 'catchip', style: catStyle(b.assisting_category) }, catLabel(b.assisting_category)), b.assisting_doctor_name),
+      b.supervisor_name ? h('div', { class: 'note' }, 'Case supervisor: ', h('b', { style: { color: '#17262B' } }, b.supervisor_name)) : null,
       b.note ? h('div', { class: 'note' }, b.note) : null);
     if (assigned) li.appendChild(h('div', { style: { fontSize: '13px', color: '#1F5145' } }, 'Assistant: ', h('b', null, b.assigned_staff)));
     else {
