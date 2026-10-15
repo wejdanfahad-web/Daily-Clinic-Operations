@@ -994,7 +994,7 @@ PAGES.inventory = async function renderInventory(app) {
   // and Individual machines & instruments (each with the staff member responsible).
   const general = items.filter((it) => it.responsible_staff_id == null);
   const individual = items.filter((it) => it.responsible_staff_id != null);
-  const itemTable = (list, canEdit) => {
+  const itemTable = (list, canEdit, ppmOnly = false) => {
     const tbody = h('tbody');
     for (const it of list) {
       const p = PPM_LABEL[it.ppm_status] || ['', ''];
@@ -1007,7 +1007,7 @@ PAGES.inventory = async function renderInventory(app) {
         h('td', null, it.requires_ppm !== 'Y' ? '' : it.ppm_due_date ? fmtDay(it.ppm_due_date) + ' ' + it.ppm_due_date.slice(0, 4) : '—'),
         h('td', null, p[0] ? h('span', { class: 'status ' + p[1] }, p[0]) : null, it.condition_status !== 'IN_SERVICE' ? h('span', { class: 'status new', style: { marginLeft: '4px' } }, it.condition_status.replace(/_/g, ' ').toLowerCase()) : null),
         h('td', { class: 'note' }, it.last_verified_by_name ? `${it.last_verified_by_name} · ${it.last_verified_on || ''}` : '—'),
-        h('td', null, canEdit ? h('div', { style: { display: 'flex', gap: '6px' } },
+        h('td', null, ppmOnly && it.requires_ppm === 'Y' ? h('button', { type: 'button', class: 'btn small', onclick: () => editItem(it, true) }, 'Update PPM') : canEdit ? h('div', { style: { display: 'flex', gap: '6px' } },
           h('button', { type: 'button', class: 'btn small', onclick: () => editItem(it) }, 'Update'),
           h('button', { type: 'button', class: 'btn small', title: 'Confirm this entry is still correct', onclick: async () => { try { await api('inventory', { method: 'POST', body: { action: 'verify', equipment_id: it.equipment_id } }); toast('Marked as checked.'); INV.data = null; render(); } catch (e) { toast(e.message); } } }, '✓ Still correct')) : null)));
     }
@@ -1017,8 +1017,8 @@ PAGES.inventory = async function renderInventory(app) {
   const count = (n) => `${n} item${n === 1 ? '' : 's'}`;
   app.appendChild(h('section', { class: 'card', style: { overflow: 'hidden' }, 'aria-label': 'General machines' },
     h('div', { class: 'card-head' }, h('h2', null, `Clinic ${INV.clinic} · General machines`),
-      h('span', { class: 'note' }, `${count(general.length)} · CIC records${isCic() ? '' : ' · read only'}`)),
-    general.length ? itemTable(general, isCic()) : h('div', { class: 'loading' }, 'No general machines recorded for this clinic yet.')));
+      h('span', { class: 'note' }, `${count(general.length)} · CIC records${isCic() ? '' : editable ? ' · you can update the PPM dates' : ' · read only'}`)),
+    general.length ? itemTable(general, isCic(), !isCic() && editable) : h('div', { class: 'loading' }, 'No general machines recorded for this clinic yet.')));
   app.appendChild(h('section', { class: 'card', style: { overflow: 'hidden' }, 'aria-label': 'Individual machines' },
     h('div', { class: 'card-head' }, h('h2', null, `Clinic ${INV.clinic} · Individual machines & instruments`),
       h('span', { class: 'note' }, `${count(individual.length)} · ${editable ? 'you can update this clinic' : 'read only: you can update your own clinic or the clinic you work in today'}`)),
@@ -1154,7 +1154,7 @@ function standardListCard(catalog, pending) {
   return card;
 }
 
-function editItem(it) {
+function editItem(it, ppmOnly = false) {
   const machine = it.item_kind === 'MACHINE';
   const ppm = machine && it.requires_ppm === 'Y';
   openDialog((body, close) => {
@@ -1167,6 +1167,20 @@ function editItem(it) {
     const status = h('select', { class: 'in' }, [['IN_SERVICE', 'In service'], ['UNDER_REPAIR', 'Under repair'], ['OUT_OF_SERVICE', 'Out of service'], ['RETIRED', 'Retired (remove from list)']].map(([v, l]) => h('option', { value: v }, l)));
     status.value = it.condition_status;
     const notes = h('input', { class: 'in', value: it.notes || '', maxlength: 200 });
+    if (ppmOnly) {
+      body.append(h('h3', null, `${it.item_name} · Clinic ${it.clinic_id}`),
+        h('div', { class: 'note' }, `Serial # ${it.serial_no || '—'} · general machine (CIC records). Update the PPM dates after each PPM visit.`),
+        h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Last PPM date', last), h('label', { class: 'f' }, 'Next PPM due *', due)), err,
+        h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn', onclick: close }, 'Cancel'),
+          h('button', { type: 'button', class: 'btn dark', onclick: async () => {
+            if (!due.value) { err.textContent = 'Enter the next PPM due date.'; err.hidden = false; return; }
+            const bodyData = { action: 'update', equipment_id: it.equipment_id, ppm_due_date: due.value };
+            if (last.value !== (it.last_ppm_date || '')) bodyData.last_ppm_date = last.value || null;
+            try { await api('inventory', { method: 'POST', body: bodyData }); close(); toast('PPM dates updated.'); INV.data = null; render(); }
+            catch (e) { err.textContent = e.message; err.hidden = false; }
+          } }, 'Save')));
+      return;
+    }
     body.append(h('h3', null, `${it.item_name} · Clinic ${it.clinic_id}`),
       it.responsible_name ? h('div', { class: 'note' }, 'Responsible: ', h('b', { style: { color: '#17262B' } }, it.responsible_name)) : null,
       machine ? h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Serial # *', serial), h('label', { class: 'f' }, 'Asset tag', tag)) : h('label', { class: 'f' }, 'Quantity', qty),

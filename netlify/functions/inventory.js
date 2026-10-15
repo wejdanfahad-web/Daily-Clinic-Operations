@@ -268,9 +268,13 @@ END;`, {
   if (!id) throw new HttpError(400, 'equipment_id is required.');
   const row = await one(`SELECT e.clinic_id, i.item_kind, e.responsible_staff_id FROM equipment_ppm e JOIN equipment_catalog i ON i.item_id = e.item_id WHERE e.equipment_id = :id`, { id });
   if (!row) throw new HttpError(404, 'Item not found.');
-  // General machines (the CIC's records: master list and anything the CIC adds) are read-only for staff.
-  if (!isCic && row.responsible_staff_id == null) throw new HttpError(403, 'General machines are kept by the CIC.');
   if (!(await canEditClinic(user, Number(row.clinic_id)))) throw new HttpError(403, 'You can only update the inventory of your own clinic or the clinic you work in today.');
+  // General machines (the CIC's records: master list and anything the CIC adds): staff of the clinic
+  // may only update the PPM dates; everything else stays with the CIC.
+  if (!isCic && row.responsible_staff_id == null) {
+    if (b.action !== 'update' || (b.last_ppm_date === undefined && b.ppm_due_date === undefined)) throw new HttpError(403, 'General machines are kept by the CIC. You can update their PPM dates.');
+    for (const k of Object.keys(b)) if (!['action', 'equipment_id', 'last_ppm_date', 'ppm_due_date'].includes(k)) delete b[k];
+  }
 
   if (b.action === 'verify') {
     await exec(`BEGIN UPDATE equipment_ppm SET last_verified_by = :sid, last_verified_at = SYSTIMESTAMP, updated_by = :by WHERE equipment_id = :id; COMMIT; END;`, { sid: user.sid, by, id });

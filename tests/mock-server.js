@@ -179,7 +179,7 @@ function extraApi(req, res, p, q, body, need) {
       send(res, 200, { ok: true }); return true;
     }
     const e = equipment.find((x) => x.equipment_id === body.equipment_id);
-    if (session.role !== 'ADMIN' && e.responsible_staff_id == null) { send(res, 403, { error: 'General machines are kept by the CIC.' }); return true; }
+    if (session.role !== 'ADMIN' && e.responsible_staff_id == null) { if (body.action !== 'update') { send(res, 403, { error: 'General machines are kept by the CIC.' }); return true; } for (const k of Object.keys(body)) if (!['action', 'equipment_id', 'last_ppm_date', 'ppm_due_date'].includes(k)) delete body[k]; }
     if (body.action === 'update') Object.assign(e, Object.fromEntries(Object.entries(body).filter(([k]) => ['quantity', 'serial_no', 'last_ppm_date', 'ppm_due_date', 'condition_status', 'notes'].includes(k))));
     e.last_verified_by_name = session.name; e.last_verified_on = today;
     send(res, 200, { ok: true }); return true;

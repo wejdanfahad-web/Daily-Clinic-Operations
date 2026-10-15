@@ -466,8 +466,14 @@ function ev(method, { body, query, cookie } = {}) {
     responder = (sql) => /user_tab_columns|UPPER\(item_name\) = 'MICROSCOPE'/.test(sql) ? rows([{ N: 1 }])
       : /responsible_staff_id FROM equipment_ppm/.test(sql) ? rows([{ CLINIC_ID: 9, ITEM_KIND: 'MACHINE', RESPONSIBLE_STAFF_ID: null }])
       : /AS n FROM dual/.test(sql) ? rows([{ N: 1 }]) : done();
-    let r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'update', equipment_id: 5, last_ppm_date: '2026-10-01' } }));
-    assert.strictEqual(r.statusCode, 403);
+    let r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'update', equipment_id: 5, serial_no: 'NEW' } }));
+    assert.strictEqual(r.statusCode, 403, 'staff cannot change a general machine');
+    calls.length = 0;
+    r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'update', equipment_id: 5, ppm_due_date: '2027-10-01', serial_no: 'NEW', condition_status: 'RETIRED' } }));
+    assert.strictEqual(r.statusCode, 200, 'staff can update PPM dates: ' + r.body);
+    const up = calls.find((c) => /UPDATE equipment_ppm/.test(c.statementText));
+    const bv = (n) => up.binds.find((x) => x.name === n).value;
+    assert.strictEqual(bv('due'), '2027-10-01'); assert.strictEqual(bv('serset'), 'N'); assert.strictEqual(bv('st'), null);
     r = await F('inventory')(ev('POST', { cookie: cic, body: { action: 'update', equipment_id: 5, last_ppm_date: '2026-10-01' } }));
     assert.strictEqual(r.statusCode, 200, r.body);
     calls.length = 0;
