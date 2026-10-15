@@ -169,7 +169,7 @@ function signInDialog() {
       e.preventDefault();
       try {
         await api('login', { method: 'POST', body: { employee_no: id.value, password: pw.value } });
-        close(); await loadMe(); S.board = null; render();
+        close(); await loadMe(); S.board = null; S.date = TODAY(); render();
       } catch (err) { msg.textContent = err.message; msg.hidden = false; }
     });
     body.appendChild(form);
@@ -947,7 +947,7 @@ async function render() {
 $('authBtn').addEventListener('click', async () => {
   if (S.me) {
     await api('logout', { method: 'POST' }).catch(() => {});
-    S.me = null; S.board = null; S.bookings = S.queues = S.history = S.compliance = S.appraisals = S.staffAdmin = S.staffMsg = null;
+    S.me = null; S.board = null; S.date = TODAY(); S.bookings = S.queues = S.history = S.compliance = S.appraisals = S.staffAdmin = S.staffMsg = null;
     go('assign');
   } else signInDialog();
 });
