@@ -317,7 +317,7 @@ async function renderAssign(app) {
     board.appendChild(h('div', { class: 'closed' }, h('b', null, 'Not shown yet'), `The schedule for ${fmtLong(date)} is shown at 7:30 AM on the day.`));
   } else {
     if (isCic() && (date > today || (date === today && riyadhClock() < '07:30'))) {
-      board.appendChild(h('div', { class: 'msg', style: { margin: '12px 20px 0', background: '#FFF4E5', color: '#8A4B0F' } }, `Only you can see this now. Staff and doctors see ${fmtDay(date)}'s schedule and duties from 7:30 AM that day.`));
+      board.appendChild(h('div', { class: 'msg', style: { margin: '12px 20px 0', background: '#FFF4E5', color: '#8A4B0F' } }, `Only you can see this now. Staff and doctors see ${fmtDay(date)}'s schedule from 7:30 AM that day (the Instruments and Crash cart duties are always visible).`));
     }
     if (!assignments.length) {
       board.appendChild(h('div', { class: 'msg', style: { margin: '12px 20px 0', background: '#F7F8F6', color: '#3E4B48' } },
@@ -591,12 +591,12 @@ async function dutiesCard(date) {
     h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' } }, d.crash.map((c) => [person(c, null, false), change('CRASH', c, 'STAFF_NURSE')]))));
   if (cic && d.skipped && d.skipped.length) card.appendChild(h('div', { class: 'note' }, 'CIC only · turn passed over: ' + d.skipped.map((x) => `${x.name} (${x.duty}, ${x.why})`).join(', ')));
   if (cic && !d.allRecorded && day >= TODAY()) card.appendChild(h('div', { class: 'row-between' },
-    h('span', { class: 'note' }, 'Preview · confirmed automatically at 4 PM the day before (staff see it at 7:30 AM on the day)'),
+    h('span', { class: 'note' }, 'Preview · confirmed automatically at 4 PM the day before'),
     h('button', { type: 'button', class: 'btn small', onclick: async () => { try { await api('duties', { method: 'POST', body: { action: 'record', date: day } }); toast('Duties recorded.'); render(); } catch (e) { toast(e.message); } } }, 'Confirm now')));
   if (!n.closed && !n.hidden) card.appendChild(h('div', { style: { background: '#F7F8F6', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: '#3E4B48' } },
     `Next (${fmtDay(next)}): instruments `, h('b', null, `AM ${n.instruments.AM ? n.instruments.AM.name : '—'} · PM ${n.instruments.PM ? n.instruments.PM.name : '—'}`),
     ' · crash cart ', h('b', null, n.crash.map((c) => c.name).join(' & ') || '—')));
-  card.appendChild(h('div', { class: 'hint' }, 'Fair rotation through everyone in turn. Anyone not available that session, or on Vitals (instruments only), is passed over and keeps her place. Staff see the duties and get a phone notification at 7:30 AM on the day. No notifications are sent between 4:30 PM and 7:30 AM.'));
+  card.appendChild(h('div', { class: 'hint' }, 'Fair rotation through everyone in turn. Anyone not available that session, or on Vitals (instruments only), is passed over and keeps her place. Everyone can see the duties at any time; the phone notification goes out at 7:30 AM on the day. No notifications are sent between 4:30 PM and 7:30 AM.'));
   return card;
 }
 

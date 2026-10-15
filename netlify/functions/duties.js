@@ -3,7 +3,7 @@
 // POST /api/duties (CIC)
 //   { action: "record", date }                          record today's/that day's picks now
 //   { action: "set", date, slot: "INST_AM"|"INST_PM"|"CRASH", staff_id, replace_log_id }   manual change
-const { readSession, handler, json, cachedJson, parseBody, HttpError, isIsoDate, riyadhToday, requireCic, releasedToStaff, STAFF_RELEASE } = require('./lib/http');
+const { readSession, handler, json, cachedJson, parseBody, HttpError, isIsoDate, riyadhToday, requireCic } = require('./lib/http');
 const { computeDuties, recordDuties } = require('./lib/duties');
 const { writeEntries } = require('./lib/assignments');
 const { notifyStaff } = require('./lib/push');
@@ -17,7 +17,6 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
     if (!isWorkday(date)) return cachedJson({ date, closed: true }, 300);
     const s = readSession(event);
     const cic = s && s.role === 'ADMIN';
-    if (!cic && !releasedToStaff(date)) return cachedJson({ date, hidden: true, visible_from: `${date} ${STAFF_RELEASE}` }, 30);
     const d = await computeDuties(date);
     const body = { date, instruments: d.instruments, crash: d.crash, allRecorded: d.allRecorded, skipped: cic ? d.skipped : undefined };
     return cic ? json(200, body) : cachedJson(body, 60);

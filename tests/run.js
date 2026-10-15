@@ -385,7 +385,7 @@ function ev(method, { body, query, cookie } = {}) {
     _setClock(null);
   });
 
-  await t('7:30 rule: a future day is hidden from the public and staff, visible to the CIC', async () => {
+  await t('7:30 rule: a future day is hidden from the public and staff (duties excepted), visible to the CIC', async () => {
     responder = () => rows([{ LOG_ID: 1, STAFF_ID: 5, STAFF_NAME: 'Haifa', SESSION_CODE: 'AM', TYPE_CODE: 'CLINIC' }]);
     let r = await F('board')(ev('GET', { query: { date: '2030-01-06' } }));
     let b = JSON.parse(r.body);
@@ -400,7 +400,7 @@ function ev(method, { body, query, cookie } = {}) {
     r = await F('board')(ev('GET', { query: { date: '2020-01-05' } }));
     assert.strictEqual(JSON.parse(r.body).hidden, undefined, 'past days are visible');
     r = await F('duties')(ev('GET', { cookie: staff, query: { date: '2030-01-06' } }));
-    assert.strictEqual(JSON.parse(r.body).hidden, true, 'duties hidden too');
+    assert.strictEqual(JSON.parse(r.body).hidden, undefined, 'duties are always visible');
   });
 
   await t('notifications about a future day wait until 07:30 on that day', async () => {
