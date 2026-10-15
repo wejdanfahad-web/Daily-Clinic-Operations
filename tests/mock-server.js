@@ -66,6 +66,7 @@ for (const m of require('fs').readFileSync(path.join(__dirname, '..', 'db', '06_
 const drafts = {};
 let leave = [{ leave_id: 1, staff_id: 4, staff_name: 'Victoria', from_date: '2026-10-18', to_date: '2026-10-20', session_code: null, type_code: 'ON_LEAVE', notes: null }];
 let eqSeq = 0; const equipment = [];
+let catSeq = 3; const catalog = [{ item_id: 1, item_name: 'Endo motor', item_kind: 'MACHINE', ppm_interval_months: 12, list_status: 'STANDARD' }, { item_id: 2, item_name: 'Apex locator', item_kind: 'MACHINE', ppm_interval_months: null, list_status: 'STANDARD' }, { item_id: 3, item_name: 'Endo explorer DG16', item_kind: 'INSTRUMENT', list_status: 'STANDARD' }];
 function extraApi(req, res, p, q, body, need) {
   const wdOf = (iso) => new Date(iso + 'T12:00:00Z').getUTCDay();
   if (p === 'duties') {
@@ -135,13 +136,26 @@ function extraApi(req, res, p, q, body, need) {
       const cid = Number(q.clinic_id);
       send(res, 200, { clinic_id: cid, editable: session.role === 'ADMIN' || ST[session.sid]?.home_clinic_id === cid, items: equipment.filter((e) => e.clinic_id === cid && e.condition_status !== 'RETIRED'),
         summary: clinics.map((c) => ({ clinic_id: c.clinic_id, items: equipment.filter((e) => e.clinic_id === c.clinic_id).length, overdue: equipment.filter((e) => e.clinic_id === c.clinic_id && e.ppm_status === 'OVERDUE').length, due_soon: 0, missing_date: 0 })),
-        catalog: [{ item_name: 'Endo motor', item_kind: 'MACHINE' }, { item_name: 'Apex locator', item_kind: 'MACHINE' }, { item_name: 'Endo explorer DG16', item_kind: 'INSTRUMENT' }] });
+        catalog: catalog.filter((c) => c.list_status === 'STANDARD'),
+        pending: session.role === 'ADMIN' ? catalog.filter((c) => c.list_status === 'PENDING').map((c) => ({ ...c, clinics: equipment.filter((e) => e.item_id === c.item_id).map((e) => 'Cl ' + e.clinic_id).join(', ') })) : undefined });
       return true;
     }
+    if (String(body.action).startsWith('catalog_')) {
+      const c = catalog.find((x) => x.item_id === body.item_id);
+      if (body.action === 'catalog_add') catalog.push({ item_id: ++catSeq, item_name: body.item_name, item_kind: body.item_kind, ppm_interval_months: body.ppm_interval_months, list_status: 'STANDARD' });
+      if (body.action === 'catalog_bulk') body.items.forEach((it) => catalog.push({ item_id: ++catSeq, ...it, list_status: 'STANDARD' }));
+      if (body.action === 'catalog_remove') c.list_status = 'REMOVED';
+      if (body.action === 'catalog_approve') c.list_status = 'STANDARD';
+      if (body.action === 'catalog_merge') { const into = catalog.find((x) => x.item_id === body.into_item_id); equipment.filter((e) => e.item_id === c.item_id).forEach((e) => { e.item_id = into.item_id; e.item_name = into.item_name; e.list_status = 'STANDARD'; }); c.list_status = 'REMOVED'; }
+      send(res, 200, { ok: true }); return true;
+    }
     if (body.action === 'add') {
+      let cat = body.item_id ? catalog.find((x) => x.item_id === body.item_id) : catalog.find((x) => x.item_name.toLowerCase() === String(body.item_name).toLowerCase() && x.item_kind === body.item_kind);
+      if (!cat) { cat = { item_id: ++catSeq, item_name: body.item_name, item_kind: body.item_kind, list_status: 'PENDING' }; catalog.push(cat); }
+      body.item_name = cat.item_name; body.item_id = cat.item_id;
       if (body.item_kind === 'MACHINE' && !body.serial_no) { send(res, 400, { error: 'Serial # is required for a machine.' }); return true; }
       const due = body.ppm_due_date || (body.last_ppm_date && body.ppm_interval_months ? new Date(new Date(body.last_ppm_date).setMonth(new Date(body.last_ppm_date).getMonth() + Number(body.ppm_interval_months))).toISOString().slice(0, 10) : null);
-      equipment.push({ equipment_id: ++eqSeq, clinic_id: body.clinic_id, item_name: body.item_name, item_kind: body.item_kind, serial_no: body.item_kind === 'MACHINE' ? body.serial_no : null, quantity: body.item_kind === 'MACHINE' ? 1 : body.quantity, last_ppm_date: body.last_ppm_date || null, ppm_due_date: due,
+      equipment.push({ equipment_id: ++eqSeq, clinic_id: body.clinic_id, item_id: body.item_id, list_status: cat.list_status, item_name: body.item_name, item_kind: body.item_kind, serial_no: body.item_kind === 'MACHINE' ? body.serial_no : null, quantity: body.item_kind === 'MACHINE' ? 1 : body.quantity, last_ppm_date: body.last_ppm_date || null, ppm_due_date: due,
         ppm_status: body.item_kind !== 'MACHINE' ? 'NOT_REQUIRED' : !due ? 'MISSING_DATE' : due < today ? 'OVERDUE' : 'OK', condition_status: 'IN_SERVICE', last_verified_by_name: session.name, last_verified_on: today });
       send(res, 200, { ok: true }); return true;
     }

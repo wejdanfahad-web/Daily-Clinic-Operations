@@ -995,7 +995,7 @@ PAGES.inventory = async function renderInventory(app) {
     const p = PPM_LABEL[it.ppm_status] || ['', ''];
     tbody.appendChild(h('tr', { class: it.condition_status !== 'IN_SERVICE' ? 'unavail' : null },
       h('td', null, h('span', { class: 'status' }, it.item_kind === 'MACHINE' ? 'Machine' : 'Instrument')),
-      h('td', { class: 'name' }, it.item_name),
+      h('td', { class: 'name' }, it.item_name, it.list_status === 'PENDING' ? h('span', { class: 'status new', style: { marginLeft: '6px' }, title: 'Typed under Other… — waiting for the CIC' }, 'new name') : null),
       h('td', { style: { fontFamily: 'var(--mono)', fontSize: '12px' } }, it.item_kind === 'MACHINE' ? (it.serial_no || '—') : ''),
       h('td', { class: 'score' }, it.item_kind === 'MACHINE' ? '' : it.quantity),
       h('td', null, it.last_ppm_date ? fmtDay(it.last_ppm_date) + ' ' + it.last_ppm_date.slice(0, 4) : (it.item_kind === 'MACHINE' ? '—' : '')),
@@ -1014,13 +1014,15 @@ PAGES.inventory = async function renderInventory(app) {
       : h('div', { class: 'loading' }, 'Nothing listed for this clinic yet.')));
 
   if (editable) app.appendChild(addItemCard(catalog));
+  if (isCic()) app.appendChild(standardListCard(catalog, INV.data.pending || []));
 };
 
 function addItemCard(catalog) {
   let kind = 'MACHINE';
   const err = h('div', { class: 'msg bad', hidden: true, role: 'alert' });
-  const name = h('input', { class: 'in', maxlength: 120, list: 'invCatalog', placeholder: 'e.g. Endo motor' });
-  const dl = h('datalist', { id: 'invCatalog' });
+  const pick = h('select', { class: 'in', 'aria-label': 'Item' });
+  const other = h('input', { class: 'in', maxlength: 120, placeholder: 'Type the item name' });
+  const otherLabel = h('label', { class: 'f' }, 'Item name (not in the list — the CIC will check it)', other);
   const serial = h('input', { class: 'in', maxlength: 60, placeholder: 'Required for machines' });
   const tag = h('input', { class: 'in', maxlength: 40, placeholder: 'Optional' });
   const last = h('input', { class: 'in', type: 'date', max: TODAY() });
@@ -1033,7 +1035,19 @@ function addItemCard(catalog) {
     h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Last PPM date', last), h('label', { class: 'f' }, 'PPM interval', interval)),
     h('label', { class: 'f' }, 'Next PPM due (if not using the interval)', due));
   const instrumentOnly = h('label', { class: 'f' }, 'Quantity', qty);
-  const fillList = () => { dl.textContent = ''; catalog.filter((c) => c.item_kind === kind).forEach((c) => dl.appendChild(h('option', { value: c.item_name }))); };
+  const fillList = () => {
+    pick.textContent = '';
+    const list = catalog.filter((c) => c.item_kind === kind);
+    pick.append(h('option', { value: '' }, list.length ? 'Choose…' : 'No list yet — choose Other…'),
+      ...list.map((c) => h('option', { value: c.item_id }, c.item_name)), h('option', { value: 'OTHER' }, 'Other…'));
+    otherLabel.hidden = true; other.value = '';
+  };
+  pick.addEventListener('change', () => {
+    otherLabel.hidden = pick.value !== 'OTHER';
+    if (pick.value === 'OTHER') other.focus();
+    const c = catalog.find((x) => String(x.item_id) === pick.value);
+    if (c && c.ppm_interval_months) interval.value = c.ppm_interval_months;
+  });
   const segBtns = [['MACHINE', 'Machine'], ['INSTRUMENT', 'Instrument']].map(([k, l]) => h('button', { type: 'button', 'aria-pressed': k === kind ? 'true' : 'false', onclick: () => {
     kind = k; segBtns.forEach((b, i) => b.setAttribute('aria-pressed', ['MACHINE', 'INSTRUMENT'][i] === k ? 'true' : 'false'));
     machineOnly.hidden = k !== 'MACHINE'; instrumentOnly.hidden = k !== 'INSTRUMENT'; fillList();
@@ -1041,20 +1055,75 @@ function addItemCard(catalog) {
   instrumentOnly.hidden = true; fillList();
   const save = h('button', { type: 'button', class: 'btn dark', onclick: async () => {
     err.hidden = true;
-    if (!name.value.trim()) { err.textContent = 'Enter the item name.'; err.hidden = false; return; }
-    if (kind === 'MACHINE' && !serial.value.trim()) { err.textContent = 'Serial # is required for a machine.'; err.hidden = false; serial.focus(); return; }
+    const show = (t, el) => { err.textContent = t; err.hidden = false; if (el) el.focus(); };
+    if (!pick.value) return show('Choose the item from the list (or Other…).', pick);
+    if (pick.value === 'OTHER' && !other.value.trim()) return show('Type the item name.', other);
+    if (kind === 'MACHINE' && !serial.value.trim()) return show('Serial # is required for a machine.', serial);
+    const item = pick.value === 'OTHER' ? { item_name: other.value } : { item_id: Number(pick.value) };
     save.disabled = true;
     try {
       await api('inventory', { method: 'POST', body: kind === 'MACHINE'
-        ? { action: 'add', clinic_id: INV.clinic, item_kind: kind, item_name: name.value, serial_no: serial.value, asset_tag: tag.value, last_ppm_date: last.value || null, ppm_interval_months: interval.value || null, ppm_due_date: due.value || null, notes: notes.value }
-        : { action: 'add', clinic_id: INV.clinic, item_kind: kind, item_name: name.value, quantity: Number(qty.value), notes: notes.value } });
-      toast('Added.'); INV.data = null; render();
-    } catch (e) { err.textContent = e.message; err.hidden = false; save.disabled = false; }
+        ? { action: 'add', clinic_id: INV.clinic, item_kind: kind, ...item, serial_no: serial.value, asset_tag: tag.value, last_ppm_date: last.value || null, ppm_interval_months: interval.value || null, ppm_due_date: due.value || null, notes: notes.value }
+        : { action: 'add', clinic_id: INV.clinic, item_kind: kind, ...item, quantity: Number(qty.value), notes: notes.value } });
+      toast(pick.value === 'OTHER' ? 'Added. The CIC will check the new name.' : 'Added.'); INV.data = null; render();
+    } catch (e) { show(e.message); save.disabled = false; }
   } }, 'Add to Clinic ' + INV.clinic);
   return h('section', { class: 'card pad', 'aria-label': 'Add an item' },
     h('h2', null, 'Add an item'),
     h('div', { class: 'seg', role: 'group', 'aria-label': 'Item type', style: { maxWidth: '320px' } }, segBtns),
-    h('label', { class: 'f' }, 'Item name', name), dl, machineOnly, instrumentOnly, h('label', { class: 'f' }, 'Notes', notes), err, h('div', null, save));
+    h('label', { class: 'f' }, 'Item', pick), otherLabel, machineOnly, instrumentOnly, h('label', { class: 'f' }, 'Notes', notes), err, h('div', null, save));
+}
+
+// CIC: the standard list behind the dropdown, plus names typed under "Other…" waiting for review
+let STD_LIST = null; // public/data/catalog.json (the department's list, loaded with one click)
+function standardListCard(catalog, pending) {
+  const card = h('details', { class: 'card pad', open: !!(pending && pending.length) },
+    h('summary', { style: { cursor: 'pointer', fontWeight: 600, fontSize: '16px' } }, `Standard list (dropdown) · ${catalog.length} item${catalog.length === 1 ? '' : 's'}${pending && pending.length ? ` · ${pending.length} to review` : ''}`));
+  const post = async (body, msg) => { try { await api('inventory', { method: 'POST', body }); if (msg) toast(msg); INV.data = null; render(); } catch (e) { toast(e.message); } };
+
+  if (pending && pending.length) {
+    const box = h('div', { style: { background: '#FFF7F6', border: '1px solid #F1B9B3', borderRadius: '10px', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '8px' } },
+      h('div', { style: { color: '#7A1E2C', fontSize: '13px' } }, h('b', null, 'Typed under "Other…" — review: '), 'add it to the list, or link it to the list item it really is (fixes spelling everywhere).'));
+    for (const p of pending) {
+      const same = h('select', { class: 'in', style: { height: '34px', width: 'auto' } }, h('option', { value: '' }, 'Same as…'),
+        catalog.filter((c) => c.item_kind === p.item_kind).map((c) => h('option', { value: c.item_id }, c.item_name)));
+      same.addEventListener('change', () => same.value && post({ action: 'catalog_merge', item_id: p.item_id, into_item_id: Number(same.value) }, 'Linked. Clinics now show the list name.'));
+      box.appendChild(h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', background: '#fff', borderRadius: '8px', padding: '8px 10px' } },
+        h('b', { style: { minWidth: '180px' } }, p.item_name), h('span', { class: 'note' }, `${p.item_kind === 'MACHINE' ? 'Machine' : 'Instrument'}${p.clinics ? ' · ' + p.clinics : ''}`),
+        h('button', { type: 'button', class: 'btn small', onclick: () => post({ action: 'catalog_approve', item_id: p.item_id }, 'Added to the list.') }, 'Add to list'), h('span', { class: 'note' }, 'or'), same));
+    }
+    card.appendChild(box);
+  }
+
+  for (const [k, label] of [['MACHINE', 'Machines'], ['INSTRUMENT', 'Instruments']]) {
+    const list = catalog.filter((c) => c.item_kind === k);
+    card.appendChild(h('div', null, h('b', { style: { fontSize: '13px' } }, `${label} (${list.length})`),
+      h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' } }, list.length ? list.map((c) => h('span', { class: 'chip', style: { background: '#F3F4F1', borderColor: '#DDE1DC' } },
+        c.item_name, c.ppm_interval_months ? h('span', { class: 'cat' }, `PPM ${c.ppm_interval_months}m`) : null,
+        h('button', { type: 'button', 'aria-label': `Remove ${c.item_name} from the list`, style: { border: 0, background: 'transparent', cursor: 'pointer', fontWeight: 700 },
+          onclick: () => confirm(`Remove "${c.item_name}" from the dropdown? Items already in clinics keep their name.`) && post({ action: 'catalog_remove', item_id: c.item_id }) }, '×')))
+        : h('span', { class: 'note' }, 'Empty'))));
+  }
+
+  const nk = h('select', { class: 'in', style: { width: 'auto' } }, h('option', { value: 'MACHINE' }, 'Machine'), h('option', { value: 'INSTRUMENT' }, 'Instrument'));
+  const nn = h('input', { class: 'in', maxlength: 120, placeholder: 'Item name, spelled exactly as it should appear' });
+  const ni = h('select', { class: 'in', style: { width: 'auto' } }, h('option', { value: '' }, 'PPM: not set'), [3, 6, 12, 24].map((m) => h('option', { value: m }, `PPM every ${m} months`)));
+  card.appendChild(h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' } }, nk, h('div', { style: { flex: '1 1 260px' } }, nn), ni,
+    h('button', { type: 'button', class: 'btn small dark', onclick: () => nn.value.trim() && post({ action: 'catalog_add', item_kind: nk.value, item_name: nn.value, ppm_interval_months: nk.value === 'MACHINE' && ni.value ? Number(ni.value) : null }, 'Added to the list.') }, 'Add to list')));
+
+  // one-click load of the department list shipped with the website
+  const loadBtn = h('button', { type: 'button', class: 'btn small', hidden: true, onclick: async () => {
+    if (!STD_LIST || !STD_LIST.length) return;
+    if (!confirm(`Load the department list (${STD_LIST.length} items) into the dropdown? Items already there are kept.`)) return;
+    await post({ action: 'catalog_bulk', items: STD_LIST }, 'Department list loaded.');
+  } }, 'Load the department list');
+  card.appendChild(loadBtn);
+  (async () => {
+    try { if (!STD_LIST) STD_LIST = (await (await fetch('/data/catalog.json', { cache: 'no-store' })).json()).items || []; } catch { STD_LIST = []; }
+    const missing = STD_LIST.filter((x) => !catalog.some((c) => c.item_kind === x.item_kind && c.item_name.toLowerCase() === String(x.item_name).toLowerCase()));
+    if (missing.length) { loadBtn.hidden = false; loadBtn.textContent = `Load the department list (${missing.length} new item${missing.length === 1 ? '' : 's'})`; }
+  })();
+  return card;
 }
 
 function editItem(it) {

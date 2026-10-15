@@ -409,6 +409,24 @@ function ev(method, { body, query, cookie } = {}) {
     _setClock(null);
   });
 
+  await t('inventory: schema step adds list_status once; list changes are CIC-only; Other… saves as PENDING', async () => {
+    let added = false;
+    require('../netlify/functions/lib/migrate')._reset();
+    responder = (sql) => /user_tab_columns/.test(sql) ? rows([{ N: added ? 1 : 0 }]) : /ALTER TABLE equipment_catalog/.test(sql) ? ((added = true), done()) : /AS n FROM dual/.test(sql) ? rows([{ N: 1 }]) : done();
+    let r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'catalog_add', item_kind: 'MACHINE', item_name: 'Endo motor' } }));
+    assert.strictEqual(r.statusCode, 403);
+    assert(added, 'column added automatically');
+    calls.length = 0;
+    r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'add', clinic_id: 9, item_kind: 'INSTRUMENT', item_name: 'DG16 long', quantity: 2 } }));
+    assert.strictEqual(r.statusCode, 200, r.body);
+    assert(!calls.some((c) => /ALTER TABLE/.test(c.statementText)), 'schema step runs once per instance');
+    const blk = calls.find((c) => /INSERT INTO equipment_ppm/.test(c.statementText));
+    assert.match(blk.statementText, /'PENDING'/);
+    assert.strictEqual(blk.binds.find((b) => b.name === 'lid').value, null);
+    r = await F('inventory')(ev('POST', { cookie: cic, body: { action: 'catalog_bulk', items: [{ item_kind: 'MACHINE', item_name: 'Endo motor', ppm_interval_months: 12 }, { item_kind: 'INSTRUMENT', item_name: 'DG16' }] } }));
+    assert.strictEqual(JSON.parse(r.body).added, 2);
+  });
+
   await t('wrong HTTP method → 405', async () => {
     const r = await F('login')(ev('GET'));
     assert.strictEqual(r.statusCode, 405);
