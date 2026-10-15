@@ -4,7 +4,7 @@ Staff assignments, rotations, surgery bookings, daily-checklist compliance and a
 
 - **Database:** Oracle Autonomous Database (Always Free); scripts in `db/`
 - **API:** Netlify Functions in `netlify/functions/`, which talk to the database over HTTPS through ORDS REST-Enabled SQL
-- **Website:** `public/` (currently a setup page; the full dashboard comes next)
+- **Website:** `public/`: the dashboard (`index.html`, `app.js`, `styles.css`), a phone app shell (`manifest.webmanifest`, `sw.js`) and the first-time `setup.html`
 - **Notifications:** free web push to staff phones (no SMS or WhatsApp fees)
 
 ## How it fits together
@@ -78,7 +78,8 @@ Run `db/00` → `db/04` (see `db/README.md`), then `db/99_smoke_test.sql`. Every
 | — | `ppm-check` (scheduled) | | daily PPM alerts |
 
 ## Tests
-`npm install && npm test` runs the functions against a fake database: auth, lockout, permissions, booking limits, audit-row building and notification logging.
+- `npm install && npm test` runs the functions against a fake database: auth, lockout, permissions, booking limits, audit-row building and notification logging.
+- `node tests/mock-server.js` previews the dashboard at http://localhost:8888 with a fake in-memory API. CIC login: `9001` / `Test1234`.
 
 ## Free-tier limits to know
 - The database stops after 7 days without use. The daily PPM check keeps it active.
