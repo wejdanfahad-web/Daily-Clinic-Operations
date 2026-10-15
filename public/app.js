@@ -289,19 +289,23 @@ function kpis(assignments, model) {
 // ---------------------------------------------------------------- page: daily assignment
 async function renderAssign(app) {
   await loadRef();
+  // Friday and Saturday are not working days: always show the next working day instead
+  if (isWeekend(S.date)) {
+    S.date = nextWorkday(S.date);
+    history.replaceState(null, '', '#/assign/' + S.date);
+  }
   const date = S.date;
-  const weekend = isWeekend(date);
   if (!S.board || S.board.date !== date) {
     app.appendChild(h('div', { class: 'loading' }, 'Loading the board…'));
-    S.board = weekend ? { date, assignments: [] } : await loadBoard(date);
+    S.board = await loadBoard(date);
     app.textContent = '';
   }
   const assignments = S.board.assignments;
   const model = boardModel(assignments);
-  const editable = canEditDay() && !weekend;
+  const editable = canEditDay();
   const hidden = !!S.board.hidden;
 
-  if (!weekend && !hidden) app.appendChild(kpis(assignments, model));
+  if (!hidden) app.appendChild(kpis(assignments, model));
 
   const today = TODAY();
   const badge = date === today ? h('span', { class: 'badge-day' }, 'TODAY') : h('span', { class: 'badge-day other' }, date < today ? 'PAST' : 'UPCOMING');
@@ -309,12 +313,14 @@ async function renderAssign(app) {
   const board = h('section', { class: 'card board', 'aria-label': 'Daily assignment' },
     h('div', { class: 'card-head' },
       h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' } }, h('h2', null, 'Daily assignment · ' + fmtLong(date)), badge),
-      h('div', { class: 'note' }, editable ? 'Tap a cell to assign, change or remove' : 'Cl = clinic number, shown when the doctor is not in the assistant\'s own clinic')));
+      editable ? h('div', { class: 'note' }, 'Tap a cell to assign, change or remove') : null));
 
-  if (weekend) {
-    board.appendChild(h('div', { class: 'closed' }, h('b', null, `No clinic sessions on ${DAYS[dow(date)]}`), 'Clinics run Sunday to Thursday.'));
-  } else if (hidden) {
-    board.appendChild(h('div', { class: 'closed' }, h('b', null, 'Not shown yet'), `The schedule for ${fmtLong(date)} is shown at 7:30 AM on the day.`));
+  if (hidden) {
+    const [y, mo, dd] = date.split('-').map(Number);
+    const nth = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
+    const mon = MONTHS[mo - 1];
+    board.appendChild(h('div', { class: 'closed' }, h('b', null, `${DAYS[dow(date)]}, ${mon} ${nth(dd)}`),
+      h('span', { style: { textDecoration: 'underline' } }, 'Will be published at 7:30AM')));
   } else {
     if (isCic() && (date > today || (date === today && riyadhClock() < '07:30'))) {
       board.appendChild(h('div', { class: 'msg', style: { margin: '12px 20px 0', background: '#FFF4E5', color: '#8A4B0F' } }, `Only you can see this now. Staff and doctors see ${fmtDay(date)}'s schedule from 7:30 AM that day (the Instruments and Crash cart duties are always visible).`));
@@ -369,7 +375,7 @@ async function renderAssign(app) {
     h('button', { type: 'button', class: 'btn', onclick: () => go('assign', nextWorkday(date, -1)) }, '← Previous day'),
     h('div', { class: 'mid' },
       h('label', null, 'Go to date', dateInput),
-      date !== today ? h('button', { type: 'button', class: 'btn dark', onclick: () => go('assign', today) }, 'Back to today') : null),
+      date !== (isWeekend(today) ? nextWorkday(today) : today) ? h('button', { type: 'button', class: 'btn dark', onclick: () => go('assign', today) }, 'Back to today') : null),
     h('button', { type: 'button', class: 'btn', onclick: () => go('assign', nextWorkday(date, 1)) }, 'Next day →')));
 
   const side = h('div', { class: 'side' });
