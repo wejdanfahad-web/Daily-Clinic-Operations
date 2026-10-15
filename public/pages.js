@@ -46,9 +46,12 @@ function entryEditor({ title, entries, homeClinic, staffList, onSave, onMove, us
           clinicSel.value = e.clinic_id || homeClinic || '';
           clinicSel.addEventListener('change', () => { e.clinic_id = Number(clinicSel.value); paint(); });
         }
-        cur.appendChild(h('div', { class: 'item' }, h('div', { class: 'cell' }, draftChips(e, homeClinic), clinical ? h('span', { class: 'note' }, 'in') : null, clinicSel),
+        const noteIn = h('input', { class: 'in', maxlength: 120, placeholder: 'Add a note…', value: e.notes || '', 'aria-label': 'Note',
+          style: { height: '34px', fontSize: '13px', width: '100%', marginTop: '6px' } });
+        noteIn.addEventListener('input', () => { e.notes = noteIn.value; });
+        cur.appendChild(h('div', { class: 'item', style: { flexWrap: 'wrap' } }, h('div', { class: 'cell' }, draftChips(e, homeClinic), clinical ? h('span', { class: 'note' }, 'in') : null, clinicSel),
           h('div', { style: { display: 'flex', gap: '6px' } }, moveSel,
-            h('button', { type: 'button', class: 'btn small danger', onclick: () => { list.splice(i, 1); paint(); } }, 'Remove'))));
+            h('button', { type: 'button', class: 'btn small danger', onclick: () => { list.splice(i, 1); paint(); } }, 'Remove')), noteIn));
       });
     };
     paint();
@@ -341,7 +344,7 @@ PAGES.planner = async function renderPlanner(app) {
             c.addEventListener('dragstart', (ev) => { P.dragging = { from: s.staff_id, sess, index: i }; ev.dataTransfer.effectAllowed = 'move'; ev.stopPropagation(); });
           }
           return c;
-        }));
+        }).concat(e.notes && (refMaps().types[e.type_code] || {}).category !== 'DUTY' && !/^Booking #\d+$/.test(e.notes) ? [h('span', { class: 'cnote' }, e.notes)] : []));
         const btn = h('button', { type: 'button', class: 'cell', 'aria-label': `${s.display_name}, ${sess}: edit plan` }, chips.length ? chips : h('span', { class: 'empty' }, '+ plan'));
         btn.addEventListener('click', () => entryEditor({
           title: `${s.display_name} · ${fmtDay(date)} · ${sess}`, entries, homeClinic: s.home_clinic_id,

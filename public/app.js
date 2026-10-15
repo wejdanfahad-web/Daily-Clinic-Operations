@@ -326,7 +326,11 @@ async function renderAssign(app) {
     const tbody = h('tbody');
     for (const m of model) {
       const cell = (sess, rows) => {
-        const chips = groupsFor(rows).flatMap((g) => chipFor(g, m.staff.home_clinic_id));
+        const chips = groupsFor(rows).flatMap((g) => {
+          const c = chipFor(g, m.staff.home_clinic_id);
+          const n = g[0].notes;
+          return n && g[0].category !== 'DUTY' && !/^Booking #\d+$/.test(n) ? [...c, h('span', { class: 'cnote' }, n)] : c;
+        });
         const inner = chips.length ? chips : [h('span', { class: 'empty' }, editable ? '+ assign' : '—')];
         return editable
           ? h('button', { type: 'button', class: 'cell', 'aria-label': `${m.staff.display_name}, ${sess}: edit`, onclick: () => editCell(m, sess) }, inner)
@@ -436,14 +440,33 @@ function editCell(m, sess) {
           ? h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
               h('span', { class: 'chip surg', title: 'Surgery' }, g.map((r) => r.doctor_name).filter(Boolean).join(' + ')), h('span', { class: 'note' }, 'in'), groupClinicPicker(g))
           : chipFor(g, m.staff.home_clinic_id);
-      cur.appendChild(h('div', { class: 'item' }, h('div', { class: 'cell' }, label),
+      // note on the existing assignment: edit in place, no need to remove and re-add the doctor
+      const noteIn = h('input', { class: 'in', maxlength: 120, placeholder: 'Add a note…', value: g[0].notes || '', 'aria-label': 'Note',
+        style: { height: '34px', fontSize: '13px', flex: '1 1 180px', minWidth: '0' } });
+      const noteSave = h('button', { type: 'button', class: 'btn small dark', hidden: true, onclick: async () => {
+        noteSave.disabled = true;
+        const notes = noteIn.value.trim() || null;
+        const entries = g[0].type_code === 'SURGERY'
+          ? [{ session: g[0].session_code, staff_id: g[0].staff_id, type_code: g[0].type_code, doctor_ids: g.map((r) => r.doctor_id).filter(Boolean),
+              supersedes_log_ids: g.filter((r) => r.doctor_id).map((r) => r.log_id), clinic_id: g[0].clinic_id, notes, action: 'AMEND' }]
+          : g.map((r) => ({ session: r.session_code, staff_id: r.staff_id, type_code: r.type_code, doctor_ids: r.doctor_id ? [r.doctor_id] : [],
+              supersedes_log_id: r.log_id, clinic_id: r.clinic_id, notes, action: 'AMEND' }));
+        try {
+          await api('assign', { method: 'POST', body: { work_date: date, client_request_id: crypto.randomUUID(), entries } });
+          close(); toast(notes ? 'Note saved.' : 'Note removed.'); await refreshBoard();
+        } catch (err) { showErr(err.message); noteSave.disabled = false; }
+      } }, 'Save note');
+      noteIn.addEventListener('input', () => { noteSave.hidden = noteIn.value.trim() === (g[0].notes || '').trim(); });
+      noteIn.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !noteSave.hidden) { ev.preventDefault(); noteSave.click(); } });
+      const noteRow = h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', width: '100%', marginTop: '6px' } }, noteIn, noteSave);
+      cur.appendChild(h('div', { class: 'item', style: { flexWrap: 'wrap' } }, h('div', { class: 'cell' }, label),
         h('button', { type: 'button', class: 'btn small danger', onclick: async () => {
           try {
             await api('assign', { method: 'POST', body: { work_date: date, client_request_id: crypto.randomUUID(),
               entries: g.map((r) => ({ session: r.session_code, staff_id: r.staff_id, type_code: r.type_code, doctor_ids: r.doctor_id ? [r.doctor_id] : [], clinic_id: r.clinic_id, supersedes_log_id: r.log_id, action: 'CANCEL' })) } });
             close(); toast('Removed. The change is kept in the log.'); await refreshBoard();
           } catch (err) { showErr(err.message); }
-        } }, g[0].session_code === 'DAY' ? 'Remove (whole day)' : 'Remove')));
+        } }, g[0].session_code === 'DAY' ? 'Remove (whole day)' : 'Remove'), noteRow));
     }
     body.append(h('div', { class: 'f', style: { fontSize: '12px', color: '#4F5D5A' } }, 'Current'), cur);
 
@@ -467,7 +490,7 @@ function editCell(m, sess) {
       if (freeClinic) clinicSel.value = freeClinic.clinic_id;
     }
     const wholeDay = h('input', { type: 'checkbox' });
-    const notes = h('input', { class: 'in', maxlength: 120, placeholder: 'Optional note' });
+    const notes = h('input', { class: 'in', maxlength: 120, placeholder: 'Optional note for the new assignment' });
 
     const doc1Label = h('label', { class: 'f' }, 'Doctor', doc1);
     const doc2Label = h('label', { class: 'f' }, 'Assisted by (2nd doctor)', doc2);
@@ -502,7 +525,7 @@ function editCell(m, sess) {
     const save = h('button', { type: 'button', class: 'btn dark', onclick: async () => {
       const t = types[typeSel.value];
       const ids = [doc1.value, typeSel.value === 'SURGERY' ? doc2.value : ''].filter(Boolean).map(Number);
-      if (t.needs_doctor === 'Y' && !ids.length) return showErr('Choose the doctor.');
+      if (t.needs_doctor === 'Y' && !ids.length) return showErr(notes.value.trim() && current.length ? 'To add a note to the current assignment, type it in the note box under it (above). This form is only for adding a new one.' : 'Choose the doctor.');
       if (typeSel.value === 'SURGERY' && ids.length === 2 && ids[0] === ids[1]) return showErr('The two doctors must be different.');
       // max assistants per doctor this session (Prof. Ahmed = 2)
       if (t.category === 'CLINICAL') {

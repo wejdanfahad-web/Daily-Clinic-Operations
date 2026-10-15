@@ -183,3 +183,5 @@ table.mgrid tr.total td { font-family: var(--mono); font-size: 11px; color: var(
   .who { text-align: left; }
   .footer { padding: 0 16px 24px; }
 }
+
+.cnote { flex-basis: 100%; font-size: 11px; color: #4F5D5A; font-style: italic; line-height: 1.3; }
