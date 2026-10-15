@@ -244,6 +244,46 @@ function ev(method, { body, query, cookie } = {}) {
     assert.strictEqual(ins.binds.find((b) => b.name === 'st').value, 'SKIPPED_NO_DEVICE');
   });
 
+  await t('inventory: machine without Serial # refused; instrument serial ignored', async () => {
+    responder = (sql) => /AS n FROM dual/.test(sql) ? rows([{ N: 1 }]) : done();
+    let r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'add', clinic_id: 9, item_kind: 'MACHINE', item_name: 'Endo motor' } }));
+    assert.strictEqual(r.statusCode, 400); assert.match(JSON.parse(r.body).error, /Serial #/);
+    r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'add', clinic_id: 9, item_kind: 'INSTRUMENT', item_name: 'DG16', quantity: 6, serial_no: 'X1', last_ppm_date: '2026-01-01' } }));
+    assert.strictEqual(r.statusCode, 200, r.body);
+    const blk = calls.find((c) => /INSERT INTO equipment_ppm/.test(c.statementText));
+    assert.strictEqual(blk.binds.find((b) => b.name === 'ser').value, null);
+    assert.strictEqual(blk.binds.find((b) => b.name === 'lp').value, null);
+    assert.strictEqual(blk.binds.find((b) => b.name === 'qty').value, 6);
+  });
+
+  await t('inventory: staff cannot edit another clinic', async () => {
+    responder = () => rows([{ N: 0 }]);
+    const r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'add', clinic_id: 3, item_kind: 'INSTRUMENT', item_name: 'DG16', quantity: 1 } }));
+    assert.strictEqual(r.statusCode, 403);
+  });
+
+  await t('planner publish: only changed sessions are cancelled and re-added', async () => {
+    const types = [{ TYPE_CODE: 'CLINIC', NEEDS_DOCTOR: 'Y', NOTIFY_ON_ASSIGN: 'N', TYPE_NAME: 'Clinic (with doctor)', CATEGORY: 'CLINICAL' }, { TYPE_CODE: 'VITALS', NEEDS_DOCTOR: 'N', NOTIFY_ON_ASSIGN: 'N', TYPE_NAME: 'Vitals', CATEGORY: 'DUTY' }];
+    const board = [
+      { LOG_ID: 1, ASSIGNMENT_GROUP_ID: 1, SESSION_CODE: 'AM', STAFF_ID: 5, DOCTOR_ID: 12, CLINIC_ID: 9, TYPE_CODE: 'CLINIC' },
+      { LOG_ID: 2, ASSIGNMENT_GROUP_ID: 2, SESSION_CODE: 'PM', STAFF_ID: 5, DOCTOR_ID: 14, CLINIC_ID: 9, TYPE_CODE: 'CLINIC' },
+    ];
+    responder = (sql) => /FROM assignment_types/.test(sql) ? rows(types) : /FROM v_assignments_current WHERE work_date/.test(sql) ? rows(board)
+      : /COUNT\(\*\) AS n/.test(sql) ? rows([{ N: 0 }]) : /v_assignment_history|push_subscriptions/.test(sql) ? rows([]) : done();
+    const draft = { 5: { AM: [{ type_code: 'CLINIC', doctor_ids: [12], clinic_id: 9 }], PM: [{ type_code: 'VITALS', doctor_ids: [] }] } };
+    const r = await F('planner')(ev('POST', { cookie: cic, body: { action: 'publish', date: '2030-01-06', draft } }));
+    assert.strictEqual(r.statusCode, 200, r.body);
+    const blk = calls.find((c) => /DECLARE/.test(c.statementText) && /assignment_logs/.test(c.statementText));
+    const actions = blk.binds.filter((b) => /^e\d+_a$/.test(b.name)).map((b) => b.value);
+    assert.deepStrictEqual(actions, ['CANCEL', 'ASSIGN'], 'AM unchanged; PM clinic cancelled, Vitals added');
+    assert.strictEqual(blk.binds.find((b) => b.name === 'e0_sup').value, 2);
+  });
+
+  await t('planner: staff cannot use it', async () => {
+    const r = await F('planner')(ev('GET', { cookie: staff, query: { date: '2030-01-06' } }));
+    assert.strictEqual(r.statusCode, 403);
+  });
+
   await t('wrong HTTP method → 405', async () => {
     const r = await F('login')(ev('GET'));
     assert.strictEqual(r.statusCode, 405);

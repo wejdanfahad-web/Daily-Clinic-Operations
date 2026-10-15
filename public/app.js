@@ -85,10 +85,16 @@ const canEditDay = () => isCic() || (S.me && S.me.inCharge && S.date === TODAY()
 
 const TABS = [
   { id: 'assign', label: 'Daily Assignment', who: 'public' },
+  { id: 'planner', label: 'Schedule Planner', who: 'cic' },
+  { id: 'timetable', label: 'Timetable', who: 'cic' },
+  { id: 'workload', label: 'Workload & rotations', who: 'cic' },
+  { id: 'inventory', label: 'Clinic inventory', who: 'staff' },
   { id: 'compliance', label: 'Daily checklists Compliance', who: 'staff' },
   { id: 'appraisals', label: 'Annual Appraisal', who: 'staff' },
   { id: 'staff', label: 'Staff & logins', who: 'cic' },
 ];
+// Extra pages register themselves here (see pages.js).
+const PAGES = {};
 const tabAllowed = (t) => t.who === 'public' || (t.who === 'staff' && isStaff()) || (t.who === 'cic' && isCic());
 
 // ---------------------------------------------------------------- reference helpers
@@ -108,12 +114,13 @@ const catLabel = (code) => code || '?';
 
 // ---------------------------------------------------------------- routing
 function readHash() {
-  const [tab, date] = location.hash.replace(/^#\/?/, '').split('/');
+  const [tab, param] = location.hash.replace(/^#\/?/, '').split('/');
   if (tab && TABS.some((t) => t.id === tab)) S.tab = tab;
-  if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) S.date = date;
+  if (param && /^\d{4}-\d{2}-\d{2}$/.test(param)) S.date = param;
+  S.param = param || null;
 }
 function go(tab, date) {
-  if (tab && tab !== S.tab) S.staffMsg = null;
+  if (tab && tab !== S.tab) { S.staffMsg = null; S.param = null; }
   S.tab = tab || S.tab;
   if (date) S.date = date;
   const hash = '#/' + S.tab + (S.tab === 'assign' && S.date !== TODAY() ? '/' + S.date : '');
@@ -835,6 +842,7 @@ async function render() {
     else if (S.tab === 'compliance') await renderCompliance(frag);
     else if (S.tab === 'appraisals') await renderAppraisals(frag);
     else if (S.tab === 'staff') await renderStaff(frag);
+    else if (PAGES[S.tab]) await PAGES[S.tab](frag);
   } catch (e) {
     frag.textContent = '';
     frag.appendChild(h('div', { class: 'card pad' }, h('h2', null, 'Could not load this page'), h('div', { class: 'msg bad' }, e.message),
@@ -856,11 +864,11 @@ $('authBtn').addEventListener('click', async () => {
 });
 window.addEventListener('hashchange', () => { readHash(); S.board = null; render(); });
 
-(async function start() {
+document.addEventListener('DOMContentLoaded', async function start() {
   readHash();
   await loadMe();
   render();
   // refresh the board every 2 minutes while the page is open
   setInterval(() => { if (S.tab === 'assign' && !$('dlg').open && document.visibilityState === 'visible') { S.board = null; S.boardsCache = {}; render(); } }, 120000);
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
-})();
+});

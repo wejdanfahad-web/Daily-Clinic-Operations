@@ -26,7 +26,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
 .brand { display: flex; align-items: center; gap: 12px; flex: 1 1 260px; }
 .brand b { display: block; font-weight: 600; font-size: 16px; }
 .brand small { display: block; font-size: 12px; color: var(--brand-sub); }
-.tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; order: 3; flex: 1 1 100%; }
 .tab { min-height: 40px; padding: 0 14px; border-radius: 8px; border: 0; background: transparent; color: var(--brand-sub); cursor: pointer; font-size: 14px; }
 .tab:hover { color: var(--brand-ink); background: var(--brand-2); }
 .tab[aria-current="page"] { background: var(--brand-ink); color: var(--brand); font-weight: 600; }

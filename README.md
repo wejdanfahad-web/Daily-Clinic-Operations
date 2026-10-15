@@ -69,6 +69,10 @@ Run `db/00` → `db/04` (see `db/README.md`), then `db/99_smoke_test.sql`. Every
 | POST | `/api/assign` | CIC, in-charge (today) | record ASSIGN / AMEND / CANCEL rows |
 | GET | `/api/queues` | staff | rotation queues + next in line |
 | GET | `/api/history` | CIC | full audit trail |
+| GET/POST | `/api/planner` | CIC | day draft (saved across devices), publish differences to the board, planned leave |
+| GET/POST | `/api/timetable` | CIC | semesters, import/paste, add/remove entries, confirm |
+| GET | `/api/workload` | CIC | quarterly workload, rest; `?view=surgeries` full surgery history |
+| GET/POST | `/api/inventory` | staff (own clinic) · CIC | machines (Serial # required) and instruments (quantity), PPM dates |
 | GET/POST | `/api/compliance` | staff read · CIC tick | monthly checklist boxes |
 | GET/POST | `/api/appraisals` | own row · CIC all | appraisal steps |
 | POST | `/api/login` `/api/logout` `/api/change-password` | | sign-in (5 tries → 15-minute lock) |

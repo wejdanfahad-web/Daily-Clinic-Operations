@@ -68,7 +68,7 @@ END;`, { id, sid, by: `${user.name} (#${user.sid})` });
   const push = await notifyStaff(sid, {
     eventType: 'SCHEDULE_CHANGE', title: 'Surgery assignment',
     body: `${b.work_date} ${b.session_code}: Surgery with ${b.doc} + ${b.asst}`,
-    url: `/?date=${b.work_date}`, dedupeKey: `SURGASG:${id}:${sid}`, assignmentLogId: b.assignment_log_id,
+    url: `/#/assign/${b.work_date}`, dedupeKey: `SURGASG:${id}:${sid}`, assignmentLogId: b.assignment_log_id,
   });
   return json(200, { ok: true, notified: push.status });
 });

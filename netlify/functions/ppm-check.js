@@ -21,7 +21,7 @@ exports.handler = async () => {
       eventType: overdue ? 'PPM_OVERDUE' : 'PPM_DUE',
       title: overdue ? 'PPM overdue' : 'PPM due soon',
       body: `${r.item_name}${r.asset_tag ? ' (' + r.asset_tag + ')' : ''} · ${r.clinic_name} · ${overdue ? 'was due ' + r.due : 'due ' + r.due}`,
-      url: `/?tab=inventory&clinic=${r.clinic_id}`,
+      url: `/#/inventory/${r.clinic_id}`,
       dedupeKey: key,
       equipmentId: r.equipment_id,
     });

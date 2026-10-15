@@ -47,6 +47,81 @@ const compl = []; for (let c = 2; c <= 19; c++) for (let m = 1; m <= 9; m++) com
 const steps = [[1, 'SMART goals set', '2026-03-31'], [2, 'Objectives agreed', '2026-04-12'], [3, 'Self assessment', '2026-10-29'], [4, 'Final appraisal signed', '2026-11-30']].map(([step_no, step_name, due_date]) => ({ step_no, step_name, due_date }));
 const appr = {}; staff.forEach((s) => steps.forEach((st) => { appr[`${s.staff_id}|${st.step_no}`] = st.step_no <= 2 ? 'Y' : 'N'; }));
 
+
+// ---- planner / timetable / workload / inventory (mock)
+const semesters = [{ semester_id: 1, semester_name: 'First semester 2026-27', starts_on: '2026-08-30', ends_on: '2027-01-14', source_file: 'tt.xlsx', confirmed_at: '2026-10-01 10:00', entries: 0 }];
+let ttSeq = 10;
+const timetable = [[1, 0, 'AM', 2], [1, 0, 'AM', 3], [2, 0, 'PM', 12], [3, 0, 'AM', 4], [4, 0, 'AM', 5], [5, 0, 'PM', 5], [7, 0, 'PM', 9], [8, 0, 'AM', 9], [9, 0, 'AM', 7]]
+  .map(([doctor_id, weekday, session_code, clinic_id]) => ({ timetable_id: ++ttSeq, semester_id: 1, doctor_id, weekday, session_code, clinic_id }));
+const drafts = {};
+let leave = [{ leave_id: 1, staff_id: 4, staff_name: 'Victoria', from_date: '2026-10-18', to_date: '2026-10-20', session_code: null, type_code: 'ON_LEAVE', notes: null }];
+let eqSeq = 0; const equipment = [];
+function extraApi(req, res, p, q, body, need) {
+  const wdOf = (iso) => new Date(iso + 'T12:00:00Z').getUTCDay();
+  if (p === 'planner') {
+    if (!need('ADMIN')) return true;
+    if (req.method === 'GET') {
+      const sem = semesters.find((s) => s.confirmed_at);
+      send(res, 200, { date: q.date, draft: drafts[q.date] ? drafts[q.date].draft : null, status: drafts[q.date] ? drafts[q.date].status : null, published_at: null,
+        semester: sem ? sem.semester_name : null,
+        timetable: sem ? timetable.filter((t) => t.weekday === wdOf(q.date)).map((t) => ({ ...t, doctor_name: D[t.doctor_id].display_name, category_code: D[t.doctor_id].category_code, max_assistants: D[t.doctor_id].max_assistants })) : [],
+        leave, board: current().filter((r) => r.work_date === q.date) });
+      return true;
+    }
+    if (body.action === 'save_draft') { drafts[body.date] = { draft: body.draft, status: 'DRAFT' }; send(res, 200, { ok: true }); return true; }
+    if (body.action === 'publish') {
+      let n = 0;
+      for (const r of current().filter((x) => x.work_date === body.date)) { addRow({ work_date: body.date, session: r.session_code, staff_id: r.staff_id, type_code: r.type_code, doctor_id: r.doctor_id, action: 'CANCEL', supersedes_log_id: r.log_id }, session.name); n++; }
+      for (const [sid, d] of Object.entries(body.draft)) for (const sess of ['AM', 'PM']) for (const e of d[sess] || []) { const g = ++grpSeq; for (const doc of (e.doctor_ids.length ? e.doctor_ids : [null])) { addRow({ work_date: body.date, session: sess, staff_id: Number(sid), type_code: e.type_code, doctor_id: doc, clinic_id: e.clinic_id, group: g }, session.name); n++; } }
+      drafts[body.date] = { draft: body.draft, status: 'PUBLISHED' };
+      send(res, 200, { ok: true, changes: n, notified: [] }); return true;
+    }
+    if (body.action === 'add_leave') { leave.push({ leave_id: leave.length + 2, staff_id: body.staff_id, staff_name: ST[body.staff_id].display_name, from_date: body.from_date, to_date: body.to_date, type_code: body.type_code }); send(res, 200, { ok: true }); return true; }
+    if (body.action === 'delete_leave') { leave = leave.filter((l) => l.leave_id !== body.leave_id); send(res, 200, { ok: true }); return true; }
+  }
+  if (p === 'timetable') {
+    if (!need('ADMIN')) return true;
+    if (req.method === 'GET') { send(res, 200, { semesters: semesters.map((s) => ({ ...s, entries: timetable.length })), entries: q.semester_id ? timetable.map((t) => ({ ...t, doctor_name: D[t.doctor_id].display_name, category_code: D[t.doctor_id].category_code, max_assistants: D[t.doctor_id].max_assistants })) : [] }); return true; }
+    if (body.action === 'import') { timetable.length = 0; body.rows.forEach((r) => timetable.push({ timetable_id: ++ttSeq, semester_id: 1, doctor_id: r.doctor_id, weekday: r.weekday, session_code: r.session, clinic_id: r.clinic_id })); semesters[0].confirmed_at = null; send(res, 200, { ok: true, saved: body.rows.length }); return true; }
+    if (body.action === 'add_entry') { timetable.push({ timetable_id: ++ttSeq, semester_id: 1, doctor_id: body.doctor_id, weekday: body.weekday, session_code: body.session, clinic_id: body.clinic_id }); send(res, 200, { ok: true }); return true; }
+    if (body.action === 'delete_entry') { const i = timetable.findIndex((t) => t.timetable_id === body.timetable_id); if (i >= 0) timetable.splice(i, 1); send(res, 200, { ok: true }); return true; }
+    if (body.action === 'confirm') { semesters[0].confirmed_at = today + ' 20:00'; send(res, 200, { ok: true }); return true; }
+    if (body.action === 'create_semester') { semesters.unshift({ semester_id: 2, semester_name: body.semester_name, starts_on: body.starts_on, ends_on: body.ends_on, confirmed_at: null }); send(res, 200, { ok: true, semester_id: 2 }); return true; }
+  }
+  if (p === 'workload') {
+    if (!need('ADMIN')) return true;
+    if (q.view === 'surgeries') {
+      const groups = {};
+      for (const r of current().filter((x) => x.type_code === 'SURGERY')) { const k = r.assignment_group_id; groups[k] = groups[k] || { work_date: r.work_date, session_code: r.session_code, staff_id: r.staff_id, staff_name: r.staff_name, doctors: [], recorded_by: r.recorded_by + ' (#99)', recorded_at: r.recorded_at, supervisor: 'Prof. Ahmed', note: null }; groups[k].doctors.push(r.doctor_name); }
+      send(res, 200, { surgeries: Object.values(groups).map((g) => ({ ...g, doctors: g.doctors.join(' + ') })).filter((g) => !q.staff_id || String(g.staff_id) === q.staff_id), totals: [] }); return true;
+    }
+    send(res, 200, { quarter: '2026-10-01', quarters: ['2026-10-01', '2026-07-01'], rows: staff.slice(0, 8).map((s, i) => ({ staff_id: s.staff_id, staff_name: s.display_name, sessions_available: 40 - i, workload_points: 38 - i * 3, load_per_session: ((38 - i * 3) / (40 - i)).toFixed(2), multi_clinic_sessions: i % 3, annual_leave_days: i, excuses: i % 2, sick_sessions: 0, appointments: 0 })) });
+    return true;
+  }
+  if (p === 'inventory') {
+    if (!need()) return true;
+    if (req.method === 'GET') {
+      const cid = Number(q.clinic_id);
+      send(res, 200, { clinic_id: cid, editable: session.role === 'ADMIN' || ST[session.sid]?.home_clinic_id === cid, items: equipment.filter((e) => e.clinic_id === cid && e.condition_status !== 'RETIRED'),
+        summary: clinics.map((c) => ({ clinic_id: c.clinic_id, items: equipment.filter((e) => e.clinic_id === c.clinic_id).length, overdue: equipment.filter((e) => e.clinic_id === c.clinic_id && e.ppm_status === 'OVERDUE').length, due_soon: 0, missing_date: 0 })),
+        catalog: [{ item_name: 'Endo motor', item_kind: 'MACHINE' }, { item_name: 'Apex locator', item_kind: 'MACHINE' }, { item_name: 'Endo explorer DG16', item_kind: 'INSTRUMENT' }] });
+      return true;
+    }
+    if (body.action === 'add') {
+      if (body.item_kind === 'MACHINE' && !body.serial_no) { send(res, 400, { error: 'Serial # is required for a machine.' }); return true; }
+      const due = body.ppm_due_date || (body.last_ppm_date && body.ppm_interval_months ? new Date(new Date(body.last_ppm_date).setMonth(new Date(body.last_ppm_date).getMonth() + Number(body.ppm_interval_months))).toISOString().slice(0, 10) : null);
+      equipment.push({ equipment_id: ++eqSeq, clinic_id: body.clinic_id, item_name: body.item_name, item_kind: body.item_kind, serial_no: body.item_kind === 'MACHINE' ? body.serial_no : null, quantity: body.item_kind === 'MACHINE' ? 1 : body.quantity, last_ppm_date: body.last_ppm_date || null, ppm_due_date: due,
+        ppm_status: body.item_kind !== 'MACHINE' ? 'NOT_REQUIRED' : !due ? 'MISSING_DATE' : due < today ? 'OVERDUE' : 'OK', condition_status: 'IN_SERVICE', last_verified_by_name: session.name, last_verified_on: today });
+      send(res, 200, { ok: true }); return true;
+    }
+    const e = equipment.find((x) => x.equipment_id === body.equipment_id);
+    if (body.action === 'update') Object.assign(e, Object.fromEntries(Object.entries(body).filter(([k]) => ['quantity', 'serial_no', 'last_ppm_date', 'ppm_due_date', 'condition_status', 'notes'].includes(k))));
+    e.last_verified_by_name = session.name; e.last_verified_on = today;
+    send(res, 200, { ok: true }); return true;
+  }
+  return false;
+}
+
 let session = null; // single-user mock: { sid, name, role }
 const send = (res, code, body, headers = {}) => { res.writeHead(code, { 'Content-Type': 'application/json', ...headers }); res.end(JSON.stringify(body)); };
 
@@ -54,8 +129,9 @@ function apiHandler(req, res, url, body) {
   const p = url.pathname.replace('/api/', '');
   const q = Object.fromEntries(url.searchParams);
   const need = (role) => { if (!session) { send(res, 401, { error: 'Please sign in.' }); return false; } if (role === 'ADMIN' && session.role !== 'ADMIN') { send(res, 403, { error: 'Only the CIC can do this.' }); return false; } return true; };
+  if (extraApi(req, res, p, q, body, need)) return;
   switch (p) {
-    case 'me': return send(res, 200, { user: session });
+    case 'me': return send(res, 200, { user: session ? { ...session, homeClinic: ST[session.sid] ? ST[session.sid].home_clinic_id : null } : null });
     case 'login':
       if (body.employee_no === '9001' && body.password === 'Test1234') { session = { sid: 99, name: 'Wejdan', role: 'ADMIN', mustChange: false }; return send(res, 200, { user: session }); }
       if (body.employee_no === '4471' && body.password === 'Temp234abc') { session = { sid: 8, name: 'Haifa', role: 'STAFF', mustChange: true }; return send(res, 200, { user: session }); }

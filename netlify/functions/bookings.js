@@ -119,7 +119,7 @@ END;`, { doc, asst, sup, d: date, s: session, note, per_sess: PER_SESSION, per_d
   const summary = `${nm[doc]} (assisted by ${nm[asst]}, supervisor ${nm[sup]}) · ${date} · ${session}`;
 
   try {
-    await notifyCic({ eventType: 'SURGERY_BOOKED', title: 'New surgery booking', body: summary + (note ? ` · ${note}` : ''), url: '/?tab=assign', dedupeKey: `SURG:${doc}:${date}:${session}:${Date.now()}` });
+    await notifyCic({ eventType: 'SURGERY_BOOKED', title: 'New surgery booking', body: summary + (note ? ` · ${note}` : ''), url: '/#/assign', dedupeKey: `SURG:${doc}:${date}:${session}:${Date.now()}` });
   } catch (e) { console.error('notify CIC failed', e); } // the booking itself is saved either way
 
   return json(200, { ok: true, message: `Sent. The CIC has been notified about ${summary}.` });
