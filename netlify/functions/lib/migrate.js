@@ -12,6 +12,7 @@ const STEPS = [
   },
   {
     id: '08_department_machine_list',
+    optional: true, // list data: a failure is logged and never blocks the page
     // The department's standard machine list (Endo inventory tracker, Oct 2026).
     // Only the dental chair, X-ray unit and microscope have a PPM due date.
     done: `SELECT COUNT(*) AS n FROM equipment_catalog WHERE UPPER(item_name) = 'MICROSCOPE' AND item_kind = 'MACHINE' AND requires_ppm = 'Y' AND list_status = 'STANDARD'`,
@@ -26,13 +27,43 @@ BEGIN
     UPDATE equipment_catalog SET list_status = 'STANDARD', is_active = 'Y', item_name = l_all(i), updated_at = SYSTIMESTAMP
      WHERE UPPER(item_name) = UPPER(l_all(i)) AND item_kind = 'MACHINE';
     IF SQL%ROWCOUNT = 0 THEN
-      INSERT INTO equipment_catalog (item_name, item_kind, requires_ppm, list_status) VALUES (l_all(i), 'MACHINE', 'N', 'STANDARD');
+      BEGIN
+        INSERT INTO equipment_catalog (item_name, item_kind, requires_ppm, list_status) VALUES (l_all(i), 'MACHINE', 'N', 'STANDARD');
+      EXCEPTION WHEN DUP_VAL_ON_INDEX THEN NULL; -- same name already used for the other kind
+      END;
     END IF;
   END LOOP;
   UPDATE equipment_catalog
      SET requires_ppm = CASE WHEN UPPER(item_name) IN ('DENTAL CHAIR', 'X-RAY UNIT', 'MICROSCOPE') THEN 'Y' ELSE 'N' END,
          updated_at = SYSTIMESTAMP
    WHERE item_kind = 'MACHINE';
+  COMMIT;
+END;`,
+  },
+  {
+    id: '10_department_instrument_list',
+    optional: true,
+    // The department's standard instrument list (Oct 2026). Spelling corrected where the list had typos.
+    done: `SELECT COUNT(*) AS n FROM equipment_catalog WHERE UPPER(item_name) = 'BIB HOLDER' AND item_kind = 'INSTRUMENT' AND list_status = 'STANDARD'`,
+    run: `
+DECLARE
+  TYPE t_names IS TABLE OF VARCHAR2(60);
+  l_all t_names := t_names('Apex Locator tips', 'Buchanan Blue', 'Buchanan Red', 'Schilder plugger (all sizes)', 'Mixing spatula',
+                           'Endo ring', 'Endo ruler', 'Hemostat straight', 'Hemostat curved', 'Stieglitz straight', 'Stieglitz curved',
+                           'Surgical scissors', 'Crown remover', 'Tooth Slooth', 'Metal files stand', 'Endo stand', 'Needle holder',
+                           'Mouth mirror', 'Mouth mirror with ruler', 'Glass slab', 'Endo explorer', 'Cotton plier',
+                           'Plastic instrument', 'Metal syringe', 'Bib holder');
+BEGIN
+  FOR i IN 1 .. l_all.COUNT LOOP
+    UPDATE equipment_catalog SET list_status = 'STANDARD', is_active = 'Y', item_name = l_all(i), updated_at = SYSTIMESTAMP
+     WHERE UPPER(item_name) = UPPER(l_all(i)) AND item_kind = 'INSTRUMENT';
+    IF SQL%ROWCOUNT = 0 THEN
+      BEGIN
+        INSERT INTO equipment_catalog (item_name, item_kind, requires_ppm, list_status) VALUES (l_all(i), 'INSTRUMENT', 'N', 'STANDARD');
+      EXCEPTION WHEN DUP_VAL_ON_INDEX THEN NULL; -- same name already used for the other kind
+      END;
+    END IF;
+  END LOOP;
   COMMIT;
 END;`,
   },
@@ -52,7 +83,11 @@ function ensureSchema() {
         const r = await one(s.done);
         if (!r || Number(r.n) === 0) {
           try { await exec(s.run); console.log('schema step applied:', s.id); }
-          catch (e) { if (!/ORA-01430/.test(e.message)) throw e; } // already added by a parallel instance
+          catch (e) {
+            if (/ORA-01430/.test(e.message)) continue;                 // already added by a parallel instance
+            if (s.optional) { console.error('schema step skipped:', s.id, e.message); continue; }
+            throw e;
+          }
         }
       }
     })().catch((e) => { ready = null; throw e; });

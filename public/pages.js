@@ -1043,7 +1043,6 @@ function addItemCard(catalog) {
   const last = h('input', { class: 'in', type: 'date', max: TODAY() });
   const interval = h('select', { class: 'in' }, h('option', { value: '' }, 'Not set'), [3, 6, 12, 24].map((m) => h('option', { value: m }, `Every ${m} months`)));
   const due = h('input', { class: 'in', type: 'date' });
-  const qty = h('input', { class: 'in', type: 'number', min: 0, max: 9999, value: 1 });
   const notes = h('input', { class: 'in', maxlength: 200, placeholder: 'Optional' });
   const otherPpm = h('input', { type: 'checkbox' });
   const otherPpmLabel = h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px' } }, otherPpm, 'This machine has a PPM due date');
@@ -1061,7 +1060,35 @@ function addItemCard(catalog) {
   };
   const syncPpm = () => { otherPpmLabel.hidden = pick.value !== 'OTHER'; ppmBox.hidden = !needsPpm(); };
   otherPpm.addEventListener('change', syncPpm);
-  const instrumentOnly = h('label', { class: 'f' }, 'Quantity', qty);
+  // Instruments: one row per item (dropdown + quantity), "+ Add more" for another row
+  const numBox = () => {
+    const q = h('input', { class: 'in', type: 'text', inputmode: 'numeric', pattern: '[0-9]*', maxlength: 4, placeholder: 'Qty', 'aria-label': 'Quantity', style: { width: '90px' } });
+    q.addEventListener('input', () => { const v = q.value.replace(/\D/g, ''); if (v !== q.value) q.value = v; });
+    return q;
+  };
+  const instRows = [];
+  const rowsBox = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } });
+  const addRow = () => {
+    const sel = h('select', { class: 'in', 'aria-label': 'Instrument' },
+      h('option', { value: '' }, 'Choose…'), catalog.filter((c) => c.item_kind === 'INSTRUMENT').map((c) => h('option', { value: c.item_id }, c.item_name)), h('option', { value: 'OTHER' }, 'Other…'));
+    const typed = h('input', { class: 'in', maxlength: 120, placeholder: 'Type the instrument name', hidden: true });
+    const q = numBox();
+    const row = { sel, typed, q };
+    const del = h('button', { type: 'button', class: 'btn small', 'aria-label': 'Remove this row', onclick: () => {
+      if (instRows.length === 1) { sel.value = ''; typed.value = ''; typed.hidden = true; q.value = ''; return; }
+      instRows.splice(instRows.indexOf(row), 1); el.remove();
+    } }, '×');
+    sel.addEventListener('change', () => { typed.hidden = sel.value !== 'OTHER'; if (!typed.hidden) typed.focus(); else if (sel.value) q.focus(); });
+    const el = h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+      h('div', { style: { flex: '1 1 240px', display: 'flex', flexDirection: 'column', gap: '6px' } }, sel, typed), q, del);
+    row.el = el; instRows.push(row); rowsBox.appendChild(el);
+    return row;
+  };
+  addRow();
+  const instrumentOnly = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+    h('div', { style: { fontSize: '12px', color: '#4F5D5A' } }, 'Instrument and quantity'), rowsBox,
+    h('div', null, h('button', { type: 'button', class: 'btn small', onclick: () => addRow().sel.focus() }, '+ Add more')));
+  const pickLabel = h('label', { class: 'f' }, 'Item', pick);
   const fillList = () => {
     pick.textContent = '';
     const list = catalog.filter((c) => c.item_kind === kind);
@@ -1078,12 +1105,33 @@ function addItemCard(catalog) {
   });
   const segBtns = [['MACHINE', 'Machine'], ['INSTRUMENT', 'Instrument']].map(([k, l]) => h('button', { type: 'button', 'aria-pressed': k === kind ? 'true' : 'false', onclick: () => {
     kind = k; segBtns.forEach((b, i) => b.setAttribute('aria-pressed', ['MACHINE', 'INSTRUMENT'][i] === k ? 'true' : 'false'));
-    machineOnly.hidden = k !== 'MACHINE'; instrumentOnly.hidden = k !== 'INSTRUMENT'; fillList();
+    machineOnly.hidden = k !== 'MACHINE'; instrumentOnly.hidden = k !== 'INSTRUMENT'; pickLabel.hidden = k !== 'MACHINE'; fillList(); if (k !== 'MACHINE') otherLabel.hidden = true;
   } }, l));
   instrumentOnly.hidden = true; fillList();
   const save = h('button', { type: 'button', class: 'btn dark', onclick: async () => {
     err.hidden = true;
     const show = (t, el) => { err.textContent = t; err.hidden = false; if (el) el.focus(); };
+    if (kind === 'INSTRUMENT') {
+      const items = [];
+      const seen = new Set();
+      for (const r of instRows) {
+        if (!r.sel.value && !r.q.value) continue;                       // empty row
+        if (!r.sel.value) return show('Choose the instrument for each quantity.', r.sel);
+        if (r.sel.value === 'OTHER' && !r.typed.value.trim()) return show('Type the instrument name.', r.typed);
+        if (!/^\d+$/.test(r.q.value)) return show('Enter the quantity (numbers only).', r.q);
+        const key = r.sel.value === 'OTHER' ? 'n:' + r.typed.value.trim().toLowerCase() : 'i:' + r.sel.value;
+        if (seen.has(key)) return show('The same instrument is listed twice. Put the total in one row.', r.sel);
+        seen.add(key);
+        items.push(r.sel.value === 'OTHER' ? { item_name: r.typed.value.trim(), quantity: Number(r.q.value) } : { item_id: Number(r.sel.value), quantity: Number(r.q.value) });
+      }
+      if (!items.length) return show('Choose an instrument and enter its quantity.', instRows[0].sel);
+      save.disabled = true;
+      try {
+        const r = await api('inventory', { method: 'POST', body: { action: 'add_instruments', clinic_id: INV.clinic, items, notes: notes.value } });
+        toast(`Saved ${items.length} instrument${items.length === 1 ? '' : 's'}${r.updated ? ` (${r.updated} already listed: quantity updated)` : ''}.`); INV.data = null; render();
+      } catch (e) { show(e.message); save.disabled = false; }
+      return;
+    }
     if (!pick.value) return show('Choose the item from the list (or Other…).', pick);
     if (pick.value === 'OTHER' && !other.value.trim()) return show('Type the item name.', other);
     if (kind === 'MACHINE' && !serial.value.trim()) return show('Serial # is required for a machine.', serial);
@@ -1093,14 +1141,14 @@ function addItemCard(catalog) {
       await api('inventory', { method: 'POST', body: kind === 'MACHINE'
         ? { action: 'add', clinic_id: INV.clinic, item_kind: kind, ...item, serial_no: serial.value, asset_tag: tag.value, notes: notes.value, requires_ppm: needsPpm() ? 'Y' : 'N',
             ...(needsPpm() ? { last_ppm_date: last.value || null, ppm_interval_months: interval.value || null, ppm_due_date: due.value || null } : {}) }
-        : { action: 'add', clinic_id: INV.clinic, item_kind: kind, ...item, quantity: Number(qty.value), notes: notes.value } });
+        : null });
       toast(pick.value === 'OTHER' ? 'Added. The CIC will check the new name.' : 'Added.'); INV.data = null; render();
     } catch (e) { show(e.message); save.disabled = false; }
-  } }, isCic() ? `Add to Clinic ${INV.clinic} · General machines` : 'Add to Clinic ' + INV.clinic);
+  } }, isCic() ? `Add to Clinic ${INV.clinic} · General` : 'Add to Clinic ' + INV.clinic);
   return h('section', { class: 'card pad', 'aria-label': 'Add an item' },
     h('h2', null, 'Add an item'), isCic() ? h('div', { class: 'hint' }, 'Items you add as the CIC go to this clinic\'s General machines (your records). Staff add their own under Individual.') : null,
     h('div', { class: 'seg', role: 'group', 'aria-label': 'Item type', style: { maxWidth: '320px' } }, segBtns),
-    h('label', { class: 'f' }, 'Item', pick), otherLabel, machineOnly, instrumentOnly, h('label', { class: 'f' }, 'Notes', notes), err, h('div', null, save));
+    pickLabel, otherLabel, machineOnly, instrumentOnly, h('label', { class: 'f' }, 'Notes', notes), err, h('div', null, save));
 }
 
 // CIC: the standard list behind the dropdown, plus names typed under "Other…" waiting for review

@@ -66,7 +66,7 @@ for (const m of require('fs').readFileSync(path.join(__dirname, '..', 'db', '06_
 const drafts = {};
 let leave = [{ leave_id: 1, staff_id: 4, staff_name: 'Victoria', from_date: '2026-10-18', to_date: '2026-10-20', session_code: null, type_code: 'ON_LEAVE', notes: null }];
 let eqSeq = 0; const equipment = [];
-let catSeq = 3; const catalog = [{ item_id: 1, item_name: 'Endo motor', item_kind: 'MACHINE', requires_ppm: 'Y', ppm_interval_months: 12, list_status: 'STANDARD' }, { item_id: 2, item_name: 'Apex locator', item_kind: 'MACHINE', requires_ppm: 'N', ppm_interval_months: null, list_status: 'STANDARD' }, { item_id: 3, item_name: 'Endo explorer DG16', item_kind: 'INSTRUMENT', list_status: 'STANDARD' }];
+let catSeq = 5; const catalog = [{ item_id: 1, item_name: 'Endo motor', item_kind: 'MACHINE', requires_ppm: 'Y', ppm_interval_months: 12, list_status: 'STANDARD' }, { item_id: 2, item_name: 'Apex locator', item_kind: 'MACHINE', requires_ppm: 'N', ppm_interval_months: null, list_status: 'STANDARD' }, { item_id: 3, item_name: 'Endo explorer DG16', item_kind: 'INSTRUMENT', list_status: 'STANDARD' }, { item_id: 4, item_name: 'Mouth mirror', item_kind: 'INSTRUMENT', list_status: 'STANDARD' }, { item_id: 5, item_name: 'Buchanan Blue', item_kind: 'INSTRUMENT', list_status: 'STANDARD' }];
 function extraApi(req, res, p, q, body, need) {
   const wdOf = (iso) => new Date(iso + 'T12:00:00Z').getUTCDay();
   if (p === 'duties') {
@@ -149,6 +149,19 @@ function extraApi(req, res, p, q, body, need) {
       if (body.action === 'catalog_approve') c.list_status = 'STANDARD';
       if (body.action === 'catalog_merge') { const into = catalog.find((x) => x.item_id === body.into_item_id); equipment.filter((e) => e.item_id === c.item_id).forEach((e) => { e.item_id = into.item_id; e.item_name = into.item_name; e.list_status = 'STANDARD'; }); c.list_status = 'REMOVED'; }
       send(res, 200, { ok: true }); return true;
+    }
+    if (body.action === 'add_instruments') {
+      let updated = 0;
+      const resp = session.role === 'ADMIN' ? null : session.sid;
+      for (const it of body.items) {
+        let cat = it.item_id ? catalog.find((x) => x.item_id === it.item_id) : catalog.find((x) => x.item_name.toLowerCase() === it.item_name.toLowerCase() && x.item_kind === 'INSTRUMENT');
+        if (!cat) { cat = { item_id: ++catSeq, item_name: it.item_name, item_kind: 'INSTRUMENT', requires_ppm: 'N', list_status: 'PENDING' }; catalog.push(cat); }
+        const ex = equipment.find((e) => e.clinic_id === body.clinic_id && e.item_id === cat.item_id && (e.responsible_staff_id ?? null) === resp);
+        if (ex) { ex.quantity = it.quantity; updated++; continue; }
+        equipment.push({ equipment_id: ++eqSeq, clinic_id: body.clinic_id, item_id: cat.item_id, item_name: cat.item_name, item_kind: 'INSTRUMENT', requires_ppm: 'N', list_status: cat.list_status, quantity: it.quantity,
+          ppm_status: 'NOT_REQUIRED', condition_status: 'IN_SERVICE', responsible_staff_id: resp, responsible_name: resp ? session.name : null, last_verified_by_name: session.name, last_verified_on: today });
+      }
+      send(res, 200, { ok: true, saved: body.items.length, updated }); return true;
     }
     if (body.action === 'import') {
       let n = 0;

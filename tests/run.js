@@ -486,6 +486,20 @@ function ev(method, { body, query, cookie } = {}) {
     assert.strictEqual(calls.find((c) => /INSERT INTO equipment_ppm/.test(c.statementText)).binds.find((b) => b.name === 'resp').value, null, 'CIC adds a general machine');
   });
 
+  await t('inventory: several instruments at once, numbers only, staff responsible', async () => {
+    responder = (sql) => /user_tab_columns|UPPER\(item_name\) = '(MICROSCOPE|BIB HOLDER)'/.test(sql) ? rows([{ N: 1 }])
+      : /SELECT item_id FROM equipment_ppm/.test(sql) ? rows([{ ITEM_ID: 7 }]) : /AS n FROM dual/.test(sql) ? rows([{ N: 1 }]) : done();
+    let r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'add_instruments', clinic_id: 9, items: [{ item_id: 7, quantity: '2a' }] } }));
+    assert.strictEqual(r.statusCode, 400, 'letters refused');
+    calls.length = 0;
+    r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'add_instruments', clinic_id: 9, items: [{ item_id: 7, quantity: 12 }, { item_name: 'Lentulo', quantity: 3 }] } }));
+    assert.strictEqual(r.statusCode, 200, r.body);
+    assert.deepStrictEqual(JSON.parse(r.body), { ok: true, saved: 2, updated: 1 });
+    const blk = calls.find((c) => /JSON_TABLE/.test(c.statementText));
+    assert.notStrictEqual(blk.binds.find((b) => b.name === 'resp').value, null);
+    assert.match(blk.statementText, /'PENDING'/);
+  });
+
   await t('wrong HTTP method → 405', async () => {
     const r = await F('login')(ev('GET'));
     assert.strictEqual(r.statusCode, 405);

@@ -6,6 +6,7 @@
 //     quantity, last_ppm_date, ppm_due_date, ppm_interval_months, notes }
 //     → Serial # exists only for machines and is required there; machines are one row per unit (quantity 1).
 //       Instruments have no serial number, only a quantity.
+//   { action: "add_instruments", clinic_id, items: [{ item_id | item_name, quantity }], notes }
 //   { action: "update", equipment_id, quantity, last_ppm_date, ppm_due_date, serial_no, asset_tag, condition_status, notes }
 //   { action: "verify", equipment_id }    "still correct" — stamps who checked and when
 // Item names come from a standard list (dropdown). "Other…" saves a typed name as PENDING; the CIC
@@ -206,6 +207,57 @@ BEGIN
   COMMIT;
 END;`, { js: JSON.stringify(rows), by });
     return json(200, { ok: true, saved: rows.filter((r) => active.has(r.c)).length, skipped_clinics: skipped });
+  }
+
+  // ---- several instruments at once: [{ item_id | item_name, quantity }]; an instrument already
+  //      listed in this clinic (same list) gets its quantity updated instead of a second row
+  if (b.action === 'add_instruments') {
+    const cid = Number(b.clinic_id);
+    if (!cid) throw new HttpError(400, 'Choose the clinic.');
+    if (!Array.isArray(b.items) || !b.items.length || b.items.length > 100) throw new HttpError(400, 'Add 1–100 instruments.');
+    const items = b.items.map((it, i) => {
+      const id = it.item_id ? Number(it.item_id) : null;
+      const nm = id ? null : clean(it.item_name, 120);
+      const q = Number(it.quantity);
+      if (!id && !nm) throw new HttpError(400, `Row ${i + 1}: choose the instrument.`);
+      if (!Number.isInteger(q) || q < 0 || q > 9999) throw new HttpError(400, `Row ${i + 1}: enter the quantity (numbers only).`);
+      return { i: id, n: nm, q };
+    });
+    if (!(await canEditClinic(user, cid))) throw new HttpError(403, 'You can only update the inventory of your own clinic or the clinic you work in today.');
+    const resp = isCic ? null : user.sid;
+    const existing = await query(`SELECT item_id FROM equipment_ppm WHERE clinic_id = :cid AND condition_status <> 'RETIRED'
+                                     AND (responsible_staff_id = :r OR (responsible_staff_id IS NULL AND :r IS NULL))`, { cid, r: resp });
+    const have = new Set(existing.map((r) => Number(r.item_id)));
+    await exec(`
+DECLARE
+  l_item NUMBER; l_eq NUMBER;
+BEGIN
+  FOR r IN (SELECT j.i, j.n, j.q FROM JSON_TABLE(:js, '$[*]' COLUMNS (i NUMBER PATH '$.i', n VARCHAR2(120) PATH '$.n', q NUMBER PATH '$.q')) j) LOOP
+    IF r.i IS NOT NULL THEN
+      SELECT item_id INTO l_item FROM equipment_catalog WHERE item_id = r.i AND item_kind = 'INSTRUMENT';
+    ELSE
+      BEGIN
+        SELECT item_id INTO l_item FROM equipment_catalog
+         WHERE UPPER(item_name) = UPPER(r.n) AND item_kind = 'INSTRUMENT' AND list_status <> 'REMOVED' AND ROWNUM = 1;
+      EXCEPTION WHEN NO_DATA_FOUND THEN
+        INSERT INTO equipment_catalog (item_name, item_kind, requires_ppm, list_status) VALUES (r.n, 'INSTRUMENT', 'N', 'PENDING')
+        RETURNING item_id INTO l_item;
+      END;
+    END IF;
+    BEGIN
+      SELECT equipment_id INTO l_eq FROM equipment_ppm
+       WHERE clinic_id = :cid AND item_id = l_item AND condition_status <> 'RETIRED'
+         AND (responsible_staff_id = :resp OR (responsible_staff_id IS NULL AND :resp IS NULL)) AND ROWNUM = 1;
+      UPDATE equipment_ppm SET quantity = r.q, last_verified_by = :sid, last_verified_at = SYSTIMESTAMP, updated_by = :by
+       WHERE equipment_id = l_eq;
+    EXCEPTION WHEN NO_DATA_FOUND THEN
+      INSERT INTO equipment_ppm (clinic_id, item_id, quantity, last_verified_by, last_verified_at, responsible_staff_id, updated_by, notes)
+      VALUES (:cid, l_item, r.q, :sid, SYSTIMESTAMP, :resp, :by, :notes);
+    END;
+  END LOOP;
+  COMMIT;
+END;`, { js: JSON.stringify(items), cid, resp, sid: user.sid, by, notes: clean(b.notes, 400) });
+    return json(200, { ok: true, saved: items.length, updated: items.filter((x) => x.i && have.has(x.i)).length });
   }
 
   if (b.action === 'add') {
