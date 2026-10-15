@@ -53,8 +53,11 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
         SELECT v.equipment_id, v.clinic_id, v.item_id, v.item_name, v.item_kind, v.requires_ppm, v.asset_tag, v.serial_no, v.quantity,
                v.condition_status, TO_CHAR(v.last_ppm_date, 'YYYY-MM-DD') AS last_ppm_date,
                TO_CHAR(v.ppm_due_date, 'YYYY-MM-DD') AS ppm_due_date, v.days_remaining, v.ppm_status, c.list_status,
-               v.last_verified_by_name, TO_CHAR(CAST(v.last_verified_at AT TIME ZONE 'Asia/Riyadh' AS DATE), 'YYYY-MM-DD') AS last_verified_on, v.notes
+               v.last_verified_by_name, TO_CHAR(CAST(v.last_verified_at AT TIME ZONE 'Asia/Riyadh' AS DATE), 'YYYY-MM-DD') AS last_verified_on, v.notes,
+               rs.display_name AS responsible_name
           FROM v_equipment_status v JOIN equipment_catalog c ON c.item_id = v.item_id
+          JOIN equipment_ppm ep ON ep.equipment_id = v.equipment_id
+          LEFT JOIN staff rs ON rs.staff_id = ep.responsible_staff_id
          WHERE v.clinic_id = :cid
          ORDER BY v.item_kind, v.item_name, v.serial_no`, { cid }) : [],
       query(`
@@ -187,13 +190,14 @@ BEGIN
     EXCEPTION WHEN NO_DATA_FOUND THEN l_eq := NULL;
     END;
     IF l_eq IS NULL THEN
-      INSERT INTO equipment_ppm (clinic_id, item_id, asset_tag, serial_no, quantity, condition_status, last_ppm_date, ppm_due_date, last_verified_by, updated_by, notes)
-      VALUES (r.c, l_item, r.t, r.s, 1, r.st, TO_DATE(r.lp, 'YYYY-MM-DD'), TO_DATE(r.due, 'YYYY-MM-DD'), r.by_staff, :by, 'Imported from the inventory sheet');
+      INSERT INTO equipment_ppm (clinic_id, item_id, asset_tag, serial_no, quantity, condition_status, last_ppm_date, ppm_due_date, last_verified_by, responsible_staff_id, updated_by, notes)
+      VALUES (r.c, l_item, r.t, r.s, 1, r.st, TO_DATE(r.lp, 'YYYY-MM-DD'), TO_DATE(r.due, 'YYYY-MM-DD'), r.by_staff, r.by_staff, :by, 'Imported from the inventory sheet');
     ELSE
       UPDATE equipment_ppm
          SET clinic_id = r.c, asset_tag = NVL(r.t, asset_tag), condition_status = r.st,
              last_ppm_date = NVL(TO_DATE(r.lp, 'YYYY-MM-DD'), last_ppm_date),
-             ppm_due_date  = NVL(TO_DATE(r.due, 'YYYY-MM-DD'), ppm_due_date), last_verified_by = NVL(r.by_staff, last_verified_by), updated_by = :by
+             ppm_due_date  = NVL(TO_DATE(r.due, 'YYYY-MM-DD'), ppm_due_date), last_verified_by = NVL(r.by_staff, last_verified_by),
+             responsible_staff_id = NVL(r.by_staff, responsible_staff_id), updated_by = :by
        WHERE equipment_id = l_eq;
     END IF;
   END LOOP;
@@ -245,15 +249,15 @@ BEGIN
      WHERE item_id = l_item AND ppm_interval_months IS NULL;
   END IF;
   INSERT INTO equipment_ppm (clinic_id, item_id, asset_tag, serial_no, quantity, last_ppm_date, ppm_due_date,
-                             last_verified_by, last_verified_at, updated_by, notes)
+                             last_verified_by, last_verified_at, responsible_staff_id, updated_by, notes)
   VALUES (:cid, l_item, :tag, :ser, :qty, TO_DATE(:lp, 'YYYY-MM-DD'), TO_DATE(:due, 'YYYY-MM-DD'),
-          :sid, SYSTIMESTAMP, :by, :notes);
+          :sid, SYSTIMESTAMP, :resp, :by, :notes);
   COMMIT;
 END;`, {
       kind, lid: listId, ser: serial, nm: name, ppm: b.requires_ppm === true || b.requires_ppm === 'Y' ? 'Y' : 'N', intv: kind === 'MACHINE' ? interval : null, cid, tag: kind === 'MACHINE' ? clean(b.asset_tag, 40) : null, qty,
       lp: kind === 'MACHINE' ? optDate(b.last_ppm_date, 'Last PPM date') : null,
       due: kind === 'MACHINE' ? optDate(b.ppm_due_date, 'PPM due date') : null,
-      sid: user.sid, by, notes: clean(b.notes, 400),
+      sid: user.sid, resp: isCic ? null : user.sid, by, notes: clean(b.notes, 400),
     });
     return json(200, { ok: true });
   }

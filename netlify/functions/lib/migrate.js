@@ -36,6 +36,12 @@ BEGIN
   COMMIT;
 END;`,
   },
+  {
+    id: '09_equipment_responsible',
+    // The staff member responsible for a machine (Staff ID in the inventory sheet, or whoever added it).
+    done: `SELECT COUNT(*) AS n FROM user_tab_columns WHERE table_name = 'EQUIPMENT_PPM' AND column_name = 'RESPONSIBLE_STAFF_ID'`,
+    run: `BEGIN EXECUTE IMMEDIATE 'ALTER TABLE equipment_ppm ADD (responsible_staff_id NUMBER(10) CONSTRAINT eq_ppm_resp_fk REFERENCES staff (staff_id))'; END;`,
+  },
 ];
 
 let ready = null;

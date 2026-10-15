@@ -160,7 +160,8 @@ function extraApi(req, res, p, q, body, need) {
         const due = r.ppm_due_date;
         const row = { clinic_id: r.clinic_id, item_id: cat.item_id, item_name: cat.item_name, item_kind: 'MACHINE', requires_ppm: cat.requires_ppm, list_status: 'STANDARD', serial_no: r.serial_no, asset_tag: r.asset_tag, quantity: 1,
           last_ppm_date: r.last_ppm_date, ppm_due_date: due, ppm_status: cat.requires_ppm !== 'Y' ? 'NOT_REQUIRED' : !due ? 'MISSING_DATE' : due < today ? 'OVERDUE' : 'OK',
-          condition_status: /non/i.test(r.status) ? 'OUT_OF_SERVICE' : 'IN_SERVICE' };
+          condition_status: /non/i.test(r.status) ? 'OUT_OF_SERVICE' : 'IN_SERVICE',
+          responsible_name: ({ '111942': 'Rhoda', '144058': 'Haifa', '140536': 'Sharifah' })[r.staff_no] || null };
         if (ex) Object.assign(ex, row); else equipment.push({ equipment_id: ++eqSeq, ...row });
         n++;
       }

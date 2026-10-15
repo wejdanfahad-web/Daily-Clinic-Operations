@@ -1158,6 +1158,7 @@ function editItem(it) {
     status.value = it.condition_status;
     const notes = h('input', { class: 'in', value: it.notes || '', maxlength: 200 });
     body.append(h('h3', null, `${it.item_name} · Clinic ${it.clinic_id}`),
+      it.responsible_name ? h('div', { class: 'note' }, 'Responsible: ', h('b', { style: { color: '#17262B' } }, it.responsible_name)) : null,
       machine ? h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Serial # *', serial), h('label', { class: 'f' }, 'Asset tag', tag)) : h('label', { class: 'f' }, 'Quantity', qty),
       ppm ? h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Last PPM date', last), h('label', { class: 'f' }, 'Next PPM due', due)) : null,
       ppm ? h('div', { class: 'hint' }, 'Change the last PPM date and leave "next due" as it is: the due date is recalculated from the interval when one is set.') : null,
