@@ -555,7 +555,7 @@ function bookSurgeryCard() {
   const op = h('select', { class: 'in' }, docOpts('Choose…'));
   const as = h('select', { class: 'in' }, docOpts('Choose…'));
   const date = h('input', { class: 'in', type: 'date', min: TODAY() });
-  const note = h('input', { class: 'in', maxlength: 120, placeholder: 'e.g. apicoectomy, needs microscope' });
+  const note = h('input', { class: 'in', maxlength: 120, placeholder: 'e.g. apicoectomy, perio collab' });
   const honey = h('input', { type: 'text', name: 'website', tabindex: '-1', autocomplete: 'off', class: 'sr-only', 'aria-hidden': 'true' });
   let sess = 'AM';
   const segBtns = ['AM', 'PM'].map((k) => h('button', { type: 'button', 'aria-pressed': k === sess ? 'true' : 'false', onclick: () => { sess = k; segBtns.forEach((b) => b.setAttribute('aria-pressed', b.textContent === k ? 'true' : 'false')); } }, k));
