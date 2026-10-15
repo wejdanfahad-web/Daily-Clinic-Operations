@@ -7,8 +7,12 @@
 //   { action: "add_entry", semester_id, doctor_id, weekday, session, clinic_id }
 //   { action: "delete_entry", timetable_id }
 //   { action: "confirm", semester_id }    the planner only uses confirmed semesters
+//   { action: "save_alias", alias, doctor_id }              remember how a timetable name maps to a doctor
+//   { action: "add_doctor", display_name, category_code, alias }   add a new doctor found in the timetable
+// The clinic is optional: the department timetable lists who is present; the CIC places them in clinics.
 const { query, one, exec } = require('./lib/db');
 const { handler, json, parseBody, HttpError, requireCic, isIsoDate } = require('./lib/http');
+const { normAlias } = require('./lib/names');
 
 function checkEntry(r, i = 0) {
   const doc = Number(r.doctor_id), wd = Number(r.weekday), cl = Number(r.clinic_id);
@@ -16,8 +20,7 @@ function checkEntry(r, i = 0) {
   if (!doc) throw new HttpError(400, `Row ${i + 1}: doctor is missing.`);
   if (!(Number.isInteger(wd) && wd >= 0 && wd <= 4)) throw new HttpError(400, `Row ${i + 1}: day must be Sunday–Thursday.`);
   if (!['AM', 'PM'].includes(s)) throw new HttpError(400, `Row ${i + 1}: session must be AM or PM.`);
-  if (!cl) throw new HttpError(400, `Row ${i + 1}: clinic is missing.`);
-  return { doctor_id: doc, weekday: wd, session: s, clinic_id: cl };
+  return { doctor_id: doc, weekday: wd, session: s, clinic_id: cl || null };
 }
 
 exports.handler = handler(['GET', 'POST'], async (event) => {
@@ -36,7 +39,8 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
              t.weekday, t.session_code, t.clinic_id
         FROM doctor_timetable t JOIN doctors d ON d.doctor_id = t.doctor_id
        WHERE t.semester_id = :s ORDER BY t.weekday, t.session_code, t.clinic_id`, { s: sid }, { limit: 5000 }) : [];
-    return json(200, { semesters, entries });
+    const aliases = await query(`SELECT alias_norm, doctor_id FROM doctor_aliases`, {}, { limit: 5000 });
+    return json(200, { semesters, entries, aliases });
   }
 
   const b = parseBody(event);
@@ -77,7 +81,8 @@ END;`, { sem, js: JSON.stringify(uniq.map((r) => ({ d: r.doctor_id, w: r.weekday
       if (!sem) throw new HttpError(400, 'Choose the semester.');
       const r = checkEntry(b);
       await exec(`BEGIN INSERT INTO doctor_timetable (semester_id, doctor_id, weekday, session_code, clinic_id)
-                  VALUES (:sem, :d, :w, :s, :c); COMMIT; END;`, { sem, d: r.doctor_id, w: r.weekday, s: r.session, c: r.clinic_id });
+                  VALUES (:sem, :d, :w, :s, :c); COMMIT;
+                  EXCEPTION WHEN DUP_VAL_ON_INDEX THEN NULL; END;`, { sem, d: r.doctor_id, w: r.weekday, s: r.session, c: r.clinic_id });
       return json(200, { ok: true });
     }
     case 'delete_entry': {
@@ -90,6 +95,42 @@ END;`, { sem, js: JSON.stringify(uniq.map((r) => ({ d: r.doctor_id, w: r.weekday
       const sem = Number(b.semester_id);
       await exec(`BEGIN UPDATE semesters SET confirmed_at = SYSTIMESTAMP WHERE semester_id = :sem; COMMIT; END;`, { sem });
       return json(200, { ok: true });
+    }
+    case 'save_alias': {
+      const alias = normAlias(b.alias);
+      const doc = Number(b.doctor_id);
+      if (!alias || !doc) throw new HttpError(400, 'alias and doctor_id are required.');
+      await exec(`BEGIN
+        MERGE INTO doctor_aliases t USING (SELECT :a AS alias_norm FROM dual) s ON (t.alias_norm = s.alias_norm)
+        WHEN MATCHED THEN UPDATE SET doctor_id = :d, created_by = :by, created_at = SYSTIMESTAMP
+        WHEN NOT MATCHED THEN INSERT (alias_norm, doctor_id, created_by) VALUES (:a, :d, :by);
+        COMMIT; END;`, { a: alias.slice(0, 120), d: doc, by });
+      return json(200, { ok: true });
+    }
+    case 'add_doctor': {
+      const raw = String(b.display_name || '').trim().replace(/\s+/g, ' ');
+      if (!raw) throw new HttpError(400, 'Enter the doctor\'s name.');
+      const title = /^prof/i.test(raw) ? 'PROF' : 'DR';
+      const name = (/^(dr|prof)\.?\s/i.test(raw) ? raw : 'Dr. ' + raw).slice(0, 60);
+      const cat = b.category_code ? String(b.category_code).toUpperCase() : null;
+      await exec(`
+DECLARE
+  l_id NUMBER;
+BEGIN
+  BEGIN
+    SELECT doctor_id INTO l_id FROM doctors WHERE UPPER(display_name) = UPPER(:n);
+  EXCEPTION WHEN NO_DATA_FOUND THEN
+    INSERT INTO doctors (display_name, full_name, title, category_code) VALUES (:n, :full, :t, :c) RETURNING doctor_id INTO l_id;
+  END;
+  IF :a IS NOT NULL THEN
+    MERGE INTO doctor_aliases x USING (SELECT :a AS alias_norm FROM dual) s ON (x.alias_norm = s.alias_norm)
+    WHEN MATCHED THEN UPDATE SET doctor_id = l_id
+    WHEN NOT MATCHED THEN INSERT (alias_norm, doctor_id, created_by) VALUES (:a, l_id, :by);
+  END IF;
+  COMMIT;
+END;`, { n: name, full: b.alias ? String(b.alias).slice(0, 120) : null, t: title, c: cat, a: b.alias ? normAlias(b.alias).slice(0, 120) : null, by });
+      const row = await one(`SELECT doctor_id, display_name, category_code, max_assistants FROM doctors WHERE UPPER(display_name) = UPPER(:n)`, { n: name });
+      return json(200, { ok: true, doctor: row });
     }
     default:
       throw new HttpError(400, 'Unknown action.');

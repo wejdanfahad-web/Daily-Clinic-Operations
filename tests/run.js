@@ -292,6 +292,21 @@ function ev(method, { body, query, cookie } = {}) {
     assert.strictEqual(cycleYear('2026-12-31'), 2026);
   });
 
+  await t('timetable import: clinic optional, compact JSON, add doctor + alias', async () => {
+    responder = (sql) => /FROM doctors WHERE UPPER/.test(sql) ? rows([{ DOCTOR_ID: 77, DISPLAY_NAME: 'Dr. Abdullah Albaz', CATEGORY_CODE: 'PG1', MAX_ASSISTANTS: 1 }]) : done();
+    let r = await F('timetable')(ev('POST', { cookie: cic, body: { action: 'import', semester_id: 1, rows: [{ doctor_id: 5, weekday: 0, session: 'AM' }, { doctor_id: 5, weekday: 0, session: 'AM' }, { doctor_id: 6, weekday: 1, session: 'pm', clinic_id: 9 }] } }));
+    assert.strictEqual(r.statusCode, 200, r.body);
+    assert.strictEqual(JSON.parse(r.body).saved, 2, 'duplicates removed');
+    const js = JSON.parse(calls[0].binds.find((b) => b.name === 'js').value);
+    assert.deepStrictEqual(js, [{ d: 5, w: 0, s: 'AM', c: null }, { d: 6, w: 1, s: 'PM', c: 9 }]);
+    r = await F('timetable')(ev('POST', { cookie: cic, body: { action: 'add_doctor', display_name: 'Abdullah Albaz', category_code: 'pg1', alias: 'Abdullah Albaz' } }));
+    assert.strictEqual(r.statusCode, 200, r.body);
+    const blk = calls.find((c) => /INSERT INTO doctors/.test(c.statementText));
+    assert.strictEqual(blk.binds.find((b) => b.name === 'n').value, 'Dr. Abdullah Albaz');
+    assert.strictEqual(blk.binds.find((b) => b.name === 'c').value, 'PG1');
+    assert.strictEqual(blk.binds.find((b) => b.name === 'a').value, 'abdullah albaz');
+  });
+
   await t('wrong HTTP method → 405', async () => {
     const r = await F('login')(ev('GET'));
     assert.strictEqual(r.statusCode, 405);

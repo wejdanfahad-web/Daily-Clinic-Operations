@@ -102,29 +102,61 @@ function leaveOn(date, staffId) {
   return (P.data.leave || []).find((l) => Number(l.staff_id) === Number(staffId) && l.from_date <= date && l.to_date >= date);
 }
 
+const LOAD = { PG1: 0.5, BD1: 0.5, PG2: 0.75, BD2: 0.75 };
+const loadOf = (docId) => LOAD[(refMaps().docs[docId] || {}).category_code] ?? 1;
+
 function autoPlan() {
   const date = P.date;
-  const staff = S.ref.staff.filter((s) => s.employment_status === 'ACTIVE');
+  const { docs } = refMaps();
+  const staff = S.ref.staff.filter((s) => s.employment_status === 'ACTIVE')
+    .sort((a, b) => (a.home_clinic_id ?? 999) - (b.home_clinic_id ?? 999));
   const draft = {};
-  const busy = { AM: new Set(), PM: new Set() };
+  const off = { AM: new Set(), PM: new Set() };
   for (const s of staff) {
     draft[s.staff_id] = { AM: [], PM: [] };
     const l = leaveOn(date, s.staff_id);
-    if (l) for (const sess of ['AM', 'PM']) { if (!l.session_code || l.session_code === sess) { draft[s.staff_id][sess] = [{ type_code: l.type_code, doctor_ids: [], clinic_id: null, notes: '' }]; busy[sess].add(Number(s.staff_id)); } }
-  }
-  const unplaced = [];
-  for (const sess of ['AM', 'PM']) {
-    for (const t of P.data.timetable.filter((x) => x.session_code === sess)) {
-      const home = staff.find((s) => Number(s.home_clinic_id) === Number(t.clinic_id) && !busy[sess].has(Number(s.staff_id)));
-      if (home) {
-        draft[home.staff_id][sess].push({ type_code: 'CLINIC', doctor_ids: [Number(t.doctor_id)], clinic_id: Number(t.clinic_id), notes: '' });
-      } else unplaced.push({ ...t, sess });
+    if (l) for (const sess of ['AM', 'PM']) {
+      if (!l.session_code || l.session_code === sess) { draft[s.staff_id][sess] = [{ type_code: l.type_code, doctor_ids: [], clinic_id: null, notes: '' }]; off[sess].add(Number(s.staff_id)); }
     }
   }
-  // second pass: give doctors whose clinic has no assistant to someone free that session (doctor moves to her clinic)
-  for (const u of unplaced) {
-    const free = staff.find((s) => !busy[u.sess].has(Number(s.staff_id)) && draft[s.staff_id][u.sess].length === 0 && s.staff_type === 'DENTAL_ASSISTANT');
-    if (free) draft[free.staff_id][u.sess].push({ type_code: 'CLINIC', doctor_ids: [Number(u.doctor_id)], clinic_id: Number(free.home_clinic_id) || Number(u.clinic_id), notes: '' });
+  const assistants = staff.filter((s) => s.staff_type === 'DENTAL_ASSISTANT');
+  for (const sess of ['AM', 'PM']) {
+    const free = () => assistants.filter((s) => !off[sess].has(Number(s.staff_id)) && draft[s.staff_id][sess].length === 0);
+    const place = (s, docId, clinicId) => draft[s.staff_id][sess].push({ type_code: 'CLINIC', doctor_ids: [Number(docId)], clinic_id: Number(clinicId) || Number(s.home_clinic_id) || null, notes: '' });
+    const present = P.data.timetable.filter((x) => x.session_code === sess);
+    const placed = new Set();
+    // 1) timetable rows that name a clinic → the assistant whose home clinic it is
+    for (const t of present.filter((x) => x.clinic_id)) {
+      const home = free().find((s) => Number(s.home_clinic_id) === Number(t.clinic_id));
+      if (home) { place(home, t.doctor_id, t.clinic_id); placed.add(Number(t.doctor_id)); }
+    }
+    // 2) everyone else, heaviest patient load first → one doctor per free assistant, in her own clinic
+    const rest = [...new Set(present.map((x) => Number(x.doctor_id)))].filter((d) => !placed.has(d)).sort((a, b) => loadOf(b) - loadOf(a));
+    const leftover = [];
+    for (const d of rest) {
+      const s = free()[0];
+      if (s) { place(s, d, null); placed.add(d); } else leftover.push(d);
+    }
+    // 3) more doctors than assistants: pair light clinics (BD1/PG1 first); 3 doctors only if all BD1
+    for (const d of leftover.sort((a, b) => loadOf(a) - loadOf(b))) {
+      const target = assistants
+        .filter((s) => !off[sess].has(Number(s.staff_id)))
+        .map((s) => {
+          const ids = draft[s.staff_id][sess].filter((e) => e.type_code === 'CLINIC').flatMap((e) => e.doctor_ids);
+          return { s, ids, load: ids.reduce((a, x) => a + loadOf(x), 0) };
+        })
+        .filter((x) => x.ids.length > 0 && (x.ids.length < 2 || (x.ids.length === 2 && [...x.ids, d].every((y) => (docs[y] || {}).category_code === 'BD1'))))
+        .sort((a, b) => a.load - b.load)[0];
+      if (target && target.load + loadOf(d) <= 1.5) place(target.s, d, null);
+    }
+    // 4) doctors allowed 2 assistants (Prof. Ahmed) get a second one if someone is still free
+    for (const t of present) {
+      const doc = docs[t.doctor_id];
+      if (doc && Number(doc.max_assistants) > 1 && placed.has(Number(t.doctor_id))) {
+        const s = free()[0];
+        if (s) place(s, t.doctor_id, null);
+      }
+    }
   }
   return draft;
 }
@@ -182,8 +214,11 @@ function plannerChecks() {
         if (!sharedDoc) issues.push({ sev: 'high', text: `Clinic ${c} has 2 assistants in the ${sess}: ${names}.` });
       }
     }
+    const seenDoc = new Set();
     for (const t of P.data.timetable.filter((x) => x.session_code === sess)) {
-      if (!docUse.has(Number(t.doctor_id))) issues.push({ sev: 'high', text: `${t.doctor_name} (${sess}, Clinic ${t.clinic_id} in the timetable) has no assistant.`, doctor: t, sess });
+      if (seenDoc.has(Number(t.doctor_id))) continue;
+      seenDoc.add(Number(t.doctor_id));
+      if (!docUse.has(Number(t.doctor_id))) issues.push({ sev: 'high', text: `${t.doctor_name} is in the timetable for the ${sess}${t.clinic_id ? ' (Clinic ' + t.clinic_id + ')' : ''} but has no assistant.`, doctor: t, sess });
     }
   }
   return issues;
@@ -389,152 +424,432 @@ function leaveCard() {
 
 // =====================================================================================
 // TIMETABLE
+// The department timetable (Word) lists, for each day and session, who is present:
+// groups "PG4 = 4 (names…)", "R2 = 4 (…)", "Faculty clinic: 5" + names, "Clinicians: 1" + names,
+// "names TBD" groups resolved from the lists at the end of the document. No clinic numbers:
+// the Planner places doctors into clinics.
 // =====================================================================================
-const TT = { semesters: null, sel: null, entries: null, preview: null };
+const TT = { semesters: null, sel: null, entries: null, aliases: null, cap: null };
 const DAY_ALIASES = { sun: 0, sunday: 0, 'الأحد': 0, mon: 1, monday: 1, 'الاثنين': 1, tue: 2, tues: 2, tuesday: 2, 'الثلاثاء': 2, wed: 3, wednesday: 3, 'الأربعاء': 3, thu: 4, thur: 4, thurs: 4, thursday: 4, 'الخميس': 4 };
-const normName = (s) => String(s || '').toLowerCase().replace(/\b(dr|prof)\b\.?/g, '').replace(/[^a-z0-9؀-ۿ]+/g, ' ').trim();
+const SESSIONS10 = WEEKDAYS.flatMap((d, wd) => ['AM', 'PM'].map((s) => ({ wd, s, label: `${d.slice(0, 3)} ${s}` })));
+const CAT_ORDER = ['PG4', 'PG3', 'PG2', 'PG1', 'BD3', 'BD2', 'BD1', 'FC', 'SP'];
+const groupToCat = (g) => {
+  const m = /^(PG|R|BD)\s?(\d)/i.exec(g || '');
+  if (m) return (m[1].toUpperCase() === 'PG' ? 'PG' : 'BD') + m[2];
+  return g === 'FC' || g === 'SP' ? g : null;
+};
+const dayOf = (txt) => {
+  const k = String(txt || '').trim().toLowerCase().replace(/[^a-z؀-ۿ]/g, '');
+  return DAY_ALIASES[k];
+};
 
-function parseTimetableText(text) {
-  const docs = S.ref.doctors;
-  const byNorm = new Map(docs.map((d) => [normName(d.display_name), d]));
-  const rows = [];
-  for (const raw of text.split(/\r?\n/)) {
-    if (!raw.trim()) continue;
-    const cols = raw.split(/\t|,|;/).map((c) => c.trim());
-    if (cols.length < 4) { rows.push({ raw, error: 'Needs 4 columns: Doctor, Day, Session, Clinic' }); continue; }
-    const [docName, dayTxt, sessTxt, clinicTxt] = cols;
-    if (/^doctor$/i.test(docName)) continue; // header row
-    const doc = byNorm.get(normName(docName));
-    const day = DAY_ALIASES[dayTxt.toLowerCase()] ?? (/^[0-4]$/.test(dayTxt) ? Number(dayTxt) : undefined);
-    const sess = /^a/i.test(sessTxt) || /صباح/.test(sessTxt) ? 'AM' : /^p/i.test(sessTxt) || /مساء/.test(sessTxt) ? 'PM' : null;
-    const clinic = Number(String(clinicTxt).replace(/\D+/g, ''));
-    const err = !doc ? `Unknown doctor "${docName}"` : day === undefined ? `Unknown day "${dayTxt}"` : !sess ? `Unknown session "${sessTxt}"` : !clinic ? `Unknown clinic "${clinicTxt}"` : null;
-    rows.push({ raw, docName, doctor: doc, weekday: day, session: sess, clinic_id: clinic, error: err });
+// ---------- reading files into rows of cells (each cell = array of lines)
+async function loadScript(src) {
+  await new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+}
+async function readDocx(file) {
+  if (!window.JSZip) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js');
+  const zip = await window.JSZip.loadAsync(await file.arrayBuffer());
+  const xml = await zip.file('word/document.xml').async('string');
+  const doc = new DOMParser().parseFromString(xml, 'application/xml');
+  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const kids = (el, name) => [...el.childNodes].filter((n) => n.namespaceURI === W && n.localName === name);
+  const textOf = (p) => [...p.getElementsByTagNameNS(W, 't')].map((t) => t.textContent).join('');
+  const body = doc.getElementsByTagNameNS(W, 'body')[0];
+  const tables = [], paragraphs = [];
+  for (const el of body.childNodes) {
+    if (el.localName === 'p') { const t = textOf(el).trim(); if (t) paragraphs.push({ text: t, afterTables: tables.length }); }
+    if (el.localName === 'tbl') {
+      const rows = [];
+      let prevCells = [];
+      for (const tr of kids(el, 'tr')) {
+        const cells = [];
+        for (const tc of kids(tr, 'tc')) {
+          const pr = kids(tc, 'tcPr')[0];
+          const vm = pr && kids(pr, 'vMerge')[0];
+          const lines = kids(tc, 'p').map(textOf).map((t) => t.trim()).filter(Boolean);
+          const cont = vm && (vm.getAttributeNS(W, 'val') || 'continue') === 'continue';
+          cells.push(cont ? (prevCells[cells.length] || []) : lines);
+        }
+        rows.push(cells);
+        prevCells = cells;
+      }
+      tables.push(rows);
+    }
   }
-  return rows;
+  return { tables, paragraphs };
+}
+async function readSheet(file) {
+  if (!window.XLSX) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+  const wb = window.XLSX.read(await file.arrayBuffer());
+  const rows = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' })
+    .map((r) => r.map((c) => String(c).split(/\r?\n/).map((x) => x.trim()).filter(Boolean)));
+  return { tables: [rows], paragraphs: [] };
 }
 
-function timetableFlags(entries) {
-  const flags = [];
+// ---------- understanding the content
+function splitNames(text) {
+  return String(text).split(/,|،|&|\/|\s+and\s+|\s+و\s*|(?<=[A-Za-z])و/).map((x) => x.trim()).filter((x) => x && !/^names?\s*tbd$/i.test(x));
+}
+function splitNameLine(line) {
+  return line.split(/\s{2,}|\t|(?<=\S)\s+(?=(?:Dr|Prof)\s*\.)/).map((x) => x.trim()).filter(Boolean);
+}
+
+function interpretTimetable({ tables, paragraphs }) {
+  // lists at the end of the document, e.g. "PG1 Doctorate" → names, "R1 Board" → names
+  const lists = [];
+  for (const p of paragraphs.filter((x) => x.afterTables > 0)) {
+    if (/^(PG|R|BD)\s?\d\b/i.test(p.text) && p.text.split(/\s+/).length <= 4) lists.push({ head: p.text, code: /^(PG|R|BD)\s?\d/i.exec(p.text)[0].replace(/\s/g, '').toUpperCase(), names: [] });
+    else if (lists.length) lists[lists.length - 1].names.push(...splitNames(p.text));
+  }
+  const resolveTbd = (code) => lists.filter((l) => l.code === code.replace(/\s/g, '').toUpperCase()).flatMap((l) => l.names);
+
+  const found = [];         // { raw, group, wd, s }
+  const checks = [];        // text
+  const listRows = [];      // fallback list format
+  for (const rows of tables) {
+    let order = null;       // session order from a header row, e.g. ['AM','PM']
+    for (const cells of rows) {
+      const flat = cells.map((c) => c.join(' '));
+      const sessHead = flat.map((t) => (/morning|\bam\b|صباح/i.test(t) ? 'AM' : /afternoon|evening|\bpm\b|مساء/i.test(t) ? 'PM' : null));
+      if (dayOf(flat[0]) === undefined && sessHead.filter(Boolean).length >= 2) { order = sessHead.filter(Boolean); continue; }
+      const wd = dayOf(flat[0]);
+      if (wd === undefined) {
+        if (cells.length >= 3) listRows.push(flat);
+        continue;
+      }
+      const sessCells = cells.slice(1);
+      sessCells.forEach((lines, i) => {
+        const s = (order && order[i]) || (i === 0 ? 'AM' : 'PM');
+        let mode = null, working = null;
+        let countInCell = 0, residents = 0, clinicians = 0, tbdIssue = false;
+        for (const line of lines) {
+          if (/^[-—–_\s]+$/.test(line)) continue;
+          const g = /^((?:PG|R|BD)\s?\d)\s*=\s*(\d+)\s*\((.*)\)\s*$/i.exec(line);
+          if (g) {
+            mode = null;
+            let names = splitNames(g[3]);
+            if (/tbd/i.test(g[3])) {
+              names = resolveTbd(g[1]);
+              if (names.length && names.length !== Number(g[2])) tbdIssue = true;
+              if (names.length && names.length !== Number(g[2])) checks.push(`${WEEKDAYS[wd]} ${s}: ${g[1].toUpperCase()} says ${g[2]} (names TBD), and the list at the end has ${names.length} names. Untick anyone who is not in that session.`);
+              if (!names.length) checks.push(`${WEEKDAYS[wd]} ${s}: ${g[1].toUpperCase()} = ${g[2]} with names TBD and no list to fill them in.`);
+            } else if (names.length !== Number(g[2])) checks.push(`${WEEKDAYS[wd]} ${s}: ${g[1].toUpperCase()} says ${g[2]} but ${names.length} names are listed.`);
+            names.forEach((n) => found.push({ raw: n, group: g[1].replace(/\s/g, '').toUpperCase(), wd, s }));
+            countInCell += names.length;
+            residents += names.length;
+            continue;
+          }
+          let m;
+          if ((m = /^faculty clinics?\s*:\s*(\d+)/i.exec(line))) { mode = 'FC'; continue; }
+          if ((m = /^clinicians?\s*:\s*(\d+)/i.exec(line))) { mode = 'SP'; continue; }
+          if ((m = /^clinics working\s*:\s*(\d+)/i.exec(line))) { working = Number(m[1]); mode = null; continue; }
+          if (/^remaining clinics?/i.test(line)) { mode = null; continue; }
+          if (mode) {
+            const names = splitNameLine(line);
+            names.forEach((n) => found.push({ raw: n, group: mode, wd, s }));
+            countInCell += names.length;
+            if (mode === 'SP') clinicians += names.length;
+          } else checks.push(`${WEEKDAYS[wd]} ${s}: could not read "${line.slice(0, 60)}".`);
+        }
+        if (working !== null && working !== residents && working !== residents + clinicians && !tbdIssue) checks.push(`${WEEKDAYS[wd]} ${s}: the document says ${working} resident clinics working, ${residents} residents were read.`);
+      });
+    }
+  }
+  // list format: Doctor | Day | Session | Clinic
+  for (const r of listRows) {
+    const wd = dayOf(r[1]);
+    const s = /^a|صباح/i.test(r[2]) ? 'AM' : /^p|مساء/i.test(r[2]) ? 'PM' : null;
+    if (wd === undefined || !s || /^doctor$/i.test(r[0])) continue;
+    found.push({ raw: r[0], group: null, wd, s, clinic: Number(String(r[3] || '').replace(/\D+/g, '')) || null });
+  }
+  return { found, checks };
+}
+
+// ---------- matching names to doctors
+const FIRST_VARIANTS = { khaled: 'khalid', khalid: 'khaled', ahmad: 'ahmed', ahmed: 'ahmad', husam: 'hussam', hussam: 'husam', fahad: 'fahd', fahd: 'fahad', mohammed: 'mohammad', mohammad: 'mohammed', muhammad: 'mohammed' };
+const stripAl = (t) => t.replace(/^(al|el|bin|ibn)(?=[a-z]{3,})/, '');
+function lev(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+function matchDoctor(raw, group) {
+  const groupCat = groupToCat(group);
+  const key = normAlias(raw);
+  const alias = TT.aliases && TT.aliases[key];
+  if (alias) return { id: alias, how: 'remembered' };
+  const exact = S.ref.doctors.find((d) => normAlias(d.display_name) === key);
+  if (exact) return { id: Number(exact.doctor_id), how: 'name' };
+  const toks = key.split(' ');
+  const isProf = /prof/i.test(raw);
+  const scored = [];
+  for (const d of S.ref.doctors) {
+    const dt = normAlias(d.display_name).split(' ');
+    const first = dt[0], rest = dt.slice(1);
+    let score = 0;
+    const firstHit = toks.findIndex((t) => t === first || FIRST_VARIANTS[t] === first);
+    const initialHit = toks.findIndex((t) => t.length === 1 && t === first[0]);
+    if (rest.length === 0) {
+      if (firstHit >= 0) score = 2;
+      else if (toks.some((t) => t.length > 3 && lev(stripAl(t), stripAl(first)) <= 1)) score = 2; // surname-only names (Prof. Alhadlaq)
+    } else {
+      const head = firstHit >= 0 ? firstHit : initialHit;
+      if (head >= 0) {
+        const others = toks.filter((_, i) => i !== head);
+        const r = rest.join(' ');
+        const restOk = rest[0].length === 1
+          ? others.some((t) => stripAl(t).startsWith(rest[0]))
+          : others.some((t) => lev(stripAl(t), stripAl(r)) <= 2);
+        if (restOk) score = firstHit >= 0 ? 3 : 2.5;
+      }
+    }
+    if (score && isProf === /^prof/i.test(d.display_name)) score += 0.2;
+    // never guess across groups: a PG1 resident is not the faculty member with the same first name
+    if (score && groupCat && d.category_code && d.category_code !== groupCat) score = 0;
+    // a first name alone is not enough when the timetable gives a surname we cannot check
+    if (score === 2 && rest.length === 0 && firstHit >= 0 && toks.length > 1 && !groupCat) score = 1.5;
+    if (score) scored.push({ d, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  if (scored.length && (scored.length === 1 || scored[0].score > scored[1].score)) return { id: Number(scored[0].d.doctor_id), how: 'guess' };
+  return { id: null, candidates: scored.map((x) => Number(x.d.doctor_id)) };
+}
+
+function buildCapture(parsed, fileName) {
+  const rows = parsed.found.map((f) => ({ ...f, ...matchDoctor(f.raw, f.group) }));
+  return { file: fileName, rows, checks: parsed.checks, off: new Set() };
+}
+
+// ---------- page
+function sessionGrid({ doctorIds, isOn, onToggle, cellText, editable }) {
   const { docs } = refMaps();
-  const bySlot = new Map();
-  for (const e of entries) {
-    const k = `${e.doctor_id}|${e.weekday}|${e.session_code}`;
-    if (!bySlot.has(k)) bySlot.set(k, []);
-    bySlot.get(k).push(e);
+  const ids = [...doctorIds].sort((a, b) => {
+    const ca = CAT_ORDER.indexOf((docs[a] || {}).category_code), cb = CAT_ORDER.indexOf((docs[b] || {}).category_code);
+    return (ca < 0 ? 99 : ca) - (cb < 0 ? 99 : cb) || String((docs[a] || {}).display_name).localeCompare(String((docs[b] || {}).display_name));
+  });
+  const counts = SESSIONS10.map(() => 0);
+  const tbody = h('tbody');
+  for (const id of ids) {
+    const d = docs[id] || { display_name: '#' + id };
+    tbody.appendChild(h('tr', null,
+      h('td', { style: { whiteSpace: 'nowrap' } }, h('span', { class: 'catchip', style: catStyle(d.category_code) }, catLabel(d.category_code)), ' ', d.display_name),
+      SESSIONS10.map((x, i) => {
+        const on = isOn(id, x.wd, x.s);
+        if (on) counts[i]++;
+        const label = on ? (cellText ? cellText(id, x.wd, x.s) : '✓') : '';
+        const style = { width: '44px', height: '30px', borderRadius: '6px', fontFamily: 'var(--mono)', fontSize: '12px', fontWeight: 600, border: on ? '0' : '1px dashed #DDE1DC', background: on ? '#16302F' : '#fff', color: on ? '#F3F4F1' : '#9AA49F', cursor: editable ? 'pointer' : 'default' };
+        return h('td', { style: { textAlign: 'center', padding: '3px' } }, editable
+          ? h('button', { type: 'button', style, 'aria-pressed': on ? 'true' : 'false', 'aria-label': `${d.display_name} ${WEEKDAYS[x.wd]} ${x.s}: ${on ? 'present' : 'not present'}`, onclick: () => onToggle(id, x.wd, x.s, on) }, label)
+          : h('span', { style: { ...style, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' } }, label));
+      })));
   }
-  for (const list of bySlot.values()) {
-    const d = docs[list[0].doctor_id] || {};
-    if (list.length > Number(d.max_assistants || 1)) flags.push(`${list[0].doctor_name} is in ${list.length} clinics on ${WEEKDAYS[list[0].weekday]} ${list[0].session_code} (${list.map((x) => 'Cl ' + x.clinic_id).join(', ')}).`);
-  }
-  const used = new Set(entries.map((e) => Number(e.doctor_id)));
-  const forgotten = S.ref.doctors.filter((d) => !used.has(Number(d.doctor_id)));
-  return { flags, forgotten };
+  tbody.appendChild(h('tr', { class: 'total', style: { borderTop: '2px solid #DDE1DC', background: '#F7F8F6' } },
+    h('th', { scope: 'row', style: { textAlign: 'left', padding: '8px 16px', fontSize: '12px' } }, 'Doctors in session'),
+    counts.map((c) => h('td', { style: { textAlign: 'center', fontFamily: 'var(--mono)', fontSize: '12px', fontWeight: 600, color: c > S.ref.staff.length ? '#7A1E2C' : '#3E4B48' } }, c))));
+  return h('div', { class: 'scroll-x' }, h('table', { class: 'grid', style: { minWidth: '900px', fontSize: '13px' } },
+    h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'Doctor'), SESSIONS10.map((x) => h('th', { scope: 'col', style: { textAlign: 'center', padding: '8px 2px' } }, x.label)))), tbody));
 }
 
 PAGES.timetable = async function renderTimetable(app) {
   await loadRef();
-  if (!TT.semesters) TT.semesters = (await api('timetable')).semesters;
-  if (!TT.sel && TT.semesters.length) TT.sel = Number(TT.semesters[0].semester_id);
-  if (TT.sel && !TT.entries) TT.entries = (await api('timetable?semester_id=' + TT.sel)).entries;
+  if (!TT.semesters) {
+    const r = await api('timetable' + (TT.sel ? '?semester_id=' + TT.sel : ''));
+    TT.semesters = r.semesters;
+    if (!TT.sel && TT.semesters.length) TT.sel = Number(TT.semesters[0].semester_id);
+    TT.entries = null;
+  }
+  if (TT.sel && !TT.entries) {
+    const r = await api('timetable?semester_id=' + TT.sel);
+    TT.entries = r.entries;
+    TT.aliases = Object.fromEntries(r.aliases.map((a) => [a.alias_norm, Number(a.doctor_id)]));
+  }
   const sem = TT.semesters.find((s) => Number(s.semester_id) === TT.sel);
   const reload = () => { TT.semesters = null; TT.entries = null; render(); };
 
   app.appendChild(h('div', { class: 'page-title' }, h('h2', null, 'Semester timetable'),
-    h('span', { class: 'note' }, 'Which doctor is in which clinic each weekday. The planner\'s Auto-plan uses the confirmed semester.')));
+    h('span', { class: 'note' }, 'CIC only · the planner uses the confirmed timetable to plan every day ahead')));
 
-  // semester picker + new semester
-  const pick = h('select', { class: 'in', style: { width: 'auto', minWidth: '240px' } }, TT.semesters.map((s) => h('option', { value: s.semester_id }, `${s.semester_name} (${fmtDay(s.starts_on)} – ${fmtDay(s.ends_on)})${s.confirmed_at ? ' ✓' : ''}`)));
+  // ---- top card: semester + upload (mockup layout)
+  const pick = h('select', { class: 'in' }, TT.semesters.map((s) => h('option', { value: s.semester_id }, `${s.semester_name}${s.confirmed_at ? ' ✓' : ''}`)));
   if (TT.sel) pick.value = TT.sel;
-  pick.addEventListener('change', () => { TT.sel = Number(pick.value); TT.entries = null; TT.preview = null; render(); });
-  const nm = h('input', { class: 'in', placeholder: 'e.g. First semester 2026-27' });
-  const st = h('input', { class: 'in', type: 'date' }), en = h('input', { class: 'in', type: 'date' });
-  app.appendChild(h('div', { class: 'card pad' },
-    TT.semesters.length ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' } }, h('b', null, 'Semester'), pick,
-      sem ? h('span', { class: 'badge-day' + (sem.confirmed_at ? '' : ' other') }, sem.confirmed_at ? 'CONFIRMED ' + sem.confirmed_at.slice(0, 10) : 'NOT CONFIRMED') : null) : h('div', { class: 'note' }, 'No semester yet. Create one below.'),
-    h('details', null, h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, 'New semester'),
-      h('div', { class: 'grid2', style: { marginTop: '8px' } }, h('label', { class: 'f' }, 'Name', nm), h('span'), h('label', { class: 'f' }, 'Starts', st), h('label', { class: 'f' }, 'Ends', en)),
-      h('button', { type: 'button', class: 'btn small dark', style: { marginTop: '8px' }, onclick: async () => {
-        try { const r = await api('timetable', { method: 'POST', body: { action: 'create_semester', semester_name: nm.value, starts_on: st.value, ends_on: en.value } }); TT.sel = r.semester_id; reload(); }
-        catch (e) { toast(e.message); }
-      } }, 'Create semester'))));
-  if (!sem) return;
-
-  // import
-  const ta = h('textarea', { class: 'in', style: { height: '140px', padding: '10px', fontFamily: 'var(--mono)', fontSize: '12px' }, placeholder: 'Doctor\tDay\tSession\tClinic\nDr. Reema\tSunday\tAM\t9\nDr. Yazeed\tSun\tPM\t12' });
-  const file = h('input', { type: 'file', accept: '.xlsx,.xls,.csv' });
+  pick.addEventListener('change', () => { TT.sel = Number(pick.value); TT.entries = null; TT.cap = null; render(); });
+  const file = h('input', { type: 'file', accept: '.docx,.xlsx,.xls,.csv', style: { minHeight: '44px', padding: '8px', border: '1px dashed #9AA49F', borderRadius: '8px', background: '#F7F8F6', width: '100%' } });
   file.addEventListener('change', async () => {
     const f = file.files[0]; if (!f) return;
+    if (!TT.sel) { toast('Create the semester first (name and dates), then upload.'); return; }
     try {
-      if (/\.csv$/i.test(f.name)) { ta.value = await f.text(); }
-      else {
-        if (!window.XLSX) await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
-        const wb = window.XLSX.read(await f.arrayBuffer());
-        ta.value = window.XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]], { FS: '\t' });
-      }
-      TT.file = f.name;
-    } catch { toast('Could not read that file. Copy the 4 columns from Excel and paste them instead.'); }
+      let parsed;
+      if (/\.docx$/i.test(f.name)) parsed = interpretTimetable(await readDocx(f));
+      else if (/\.csv$/i.test(f.name)) parsed = interpretTimetable({ tables: [(await f.text()).split(/\r?\n/).map((l) => l.split(/\t|,|;/).map((c) => [c.trim()].filter(Boolean)))], paragraphs: [] });
+      else if (/\.docx?$/i.test(f.name)) { toast('Old .doc files cannot be read. In Word, use File → Save As → Word Document (.docx).'); return; }
+      else parsed = interpretTimetable(await readSheet(f));
+      if (!parsed.found.length) { toast('No doctors found in that file. Send it to Claude so the reader can be adjusted.'); return; }
+      TT.cap = buildCapture(parsed, f.name);
+      render();
+    } catch (e) { console.error(e); toast('Could not read that file: ' + e.message); }
   });
-  const prevBox = h('div');
-  const check = h('button', { type: 'button', class: 'btn', onclick: () => { TT.preview = parseTimetableText(ta.value); paintPreview(); } }, 'Check rows');
-  const paintPreview = () => {
-    prevBox.textContent = '';
-    if (!TT.preview) return;
-    const good = TT.preview.filter((r) => !r.error), bad = TT.preview.filter((r) => r.error);
-    prevBox.appendChild(h('div', { class: 'msg ' + (bad.length ? 'bad' : 'ok') }, `${good.length} row(s) ready${bad.length ? ` · ${bad.length} row(s) need fixing (they will be skipped)` : ''}`));
-    if (bad.length) prevBox.appendChild(h('ul', { class: 'plain', style: { fontSize: '12px', marginTop: '6px' } }, bad.slice(0, 30).map((r) => h('li', null, h('span', { style: { fontFamily: 'var(--mono)' } }, r.raw.slice(0, 60)), ' → ', h('b', null, r.error)))));
-    if (good.length) prevBox.appendChild(h('button', { type: 'button', class: 'btn primary', style: { marginTop: '8px' }, onclick: async () => {
-      if (TT.entries.length && !confirm(`Replace the ${TT.entries.length} existing entries of this semester with these ${good.length}?`)) return;
-      try {
-        const r = await api('timetable', { method: 'POST', body: { action: 'import', semester_id: TT.sel, source_file: TT.file || 'pasted', rows: good.map((g) => ({ doctor_id: g.doctor.doctor_id, weekday: g.weekday, session: g.session, clinic_id: g.clinic_id })) } });
-        toast(`Saved ${r.saved} entries. Review the flags, then confirm.`); TT.preview = null; reload();
-      } catch (e) { toast(e.message); }
-    } }, `Save ${good.length} entries`));
-  };
-  app.appendChild(h('details', { class: 'card pad', open: !TT.entries.length },
-    h('summary', { style: { cursor: 'pointer', fontWeight: 600, fontSize: '16px' } }, 'Upload or paste the timetable'),
-    h('div', { class: 'note' }, 'Four columns: Doctor · Day (Sun–Thu) · Session (AM/PM) · Clinic number. Copy them from Excel and paste below, or choose an Excel/CSV file with those columns.'),
-    file, ta, h('div', null, check), prevBox));
+  const nm = h('input', { class: 'in', placeholder: 'e.g. First semester 2026-27 (Version B)' });
+  const st = h('input', { class: 'in', type: 'date' }), en = h('input', { class: 'in', type: 'date' });
+  const topCard = h('section', { class: 'card', style: { padding: '20px', display: 'flex', flexWrap: 'wrap', gap: '16px 20px', alignItems: 'flex-end' } },
+    h('label', { class: 'f', style: { flex: '1 1 320px', fontSize: '13px' } }, 'Upload timetable (Word, Excel or CSV) — the department timetable can be uploaded as it is', file),
+    TT.semesters.length ? h('label', { class: 'f', style: { flex: '1 1 240px', fontSize: '13px' } }, 'Semester', pick) : null,
+    sem ? h('div', { style: { fontSize: '13px', color: '#4F5D5A', paddingBottom: '12px' } }, `${fmtDay(sem.starts_on)} ${sem.starts_on.slice(0, 4)} – ${fmtDay(sem.ends_on)} ${sem.ends_on.slice(0, 4)}`) : null,
+    h('details', { style: { flex: '1 1 100%' }, open: !TT.semesters.length },
+      h('summary', { style: { cursor: 'pointer', fontWeight: 600, fontSize: '13px' } }, TT.semesters.length ? 'New semester / version' : 'Create the semester first'),
+      h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '8px', alignItems: 'flex-end' } },
+        h('label', { class: 'f', style: { flex: '2 1 240px' } }, 'Name', nm), h('label', { class: 'f', style: { flex: '1 1 150px' } }, 'Starts', st), h('label', { class: 'f', style: { flex: '1 1 150px' } }, 'Ends', en),
+        h('button', { type: 'button', class: 'btn dark', onclick: async () => {
+          try { const r = await api('timetable', { method: 'POST', body: { action: 'create_semester', semester_name: nm.value, starts_on: st.value, ends_on: en.value } }); TT.sel = r.semester_id; reload(); }
+          catch (e) { toast(e.message); }
+        } }, 'Create'))));
+  app.appendChild(topCard);
+  if (!sem) return;
 
-  // flags
-  const { flags, forgotten } = timetableFlags(TT.entries);
-  const flagCard = cardSection('Flags');
-  if (!flags.length && !forgotten.length) flagCard.appendChild(h('div', { class: 'msg ok' }, 'No clashes, and every active doctor has at least one session.'));
-  for (const f of flags) flagCard.appendChild(h('div', { class: 'msg bad', style: { padding: '8px 10px' } }, 'Duplicated: ' + f));
-  if (forgotten.length) flagCard.appendChild(h('div', { class: 'msg', style: { background: '#FFF4E5', color: '#8A4B0F', padding: '8px 10px' } }, `Not in the timetable (forgotten?): ${forgotten.map((d) => d.display_name).join(', ')}`));
-  flagCard.appendChild(h('div', { class: 'row-between' },
-    h('span', { class: 'note' }, sem.confirmed_at ? 'Confirmed. Changes made now are used straight away.' : 'When it looks right, confirm it so the planner can use it.'),
-    h('button', { type: 'button', class: 'btn dark', disabled: !TT.entries.length, onclick: async () => { try { await api('timetable', { method: 'POST', body: { action: 'confirm', semester_id: TT.sel } }); toast('Timetable confirmed.'); reload(); } catch (e) { toast(e.message); } } }, sem.confirmed_at ? 'Confirm again' : 'Confirm timetable')));
-  app.appendChild(flagCard);
+  // ---- captured (uploaded, not saved yet)
+  if (TT.cap) { renderCapture(app); return; }
 
-  // grid
-  const tbody = h('tbody');
-  for (const sess of ['AM', 'PM']) {
-    tbody.appendChild(h('tr', null, h('th', { scope: 'row', style: { padding: '8px 16px', textAlign: 'left', verticalAlign: 'top' } }, sess),
-      WEEKDAYS.map((_, wd) => {
-        const list = TT.entries.filter((e) => e.weekday === wd && e.session_code === sess).sort((a, b) => a.clinic_id - b.clinic_id);
-        return h('td', { style: { verticalAlign: 'top', padding: '6px' } }, h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } }, list.map((e) =>
-          h('span', { class: 'chip', style: { ...catStyle(e.category_code), justifyContent: 'space-between' } },
-            h('span', null, h('span', { class: 'cat' }, 'Cl ' + e.clinic_id), ' ', e.doctor_name),
-            h('button', { type: 'button', 'aria-label': `Remove ${e.doctor_name} ${WEEKDAYS[wd]} ${sess}`, style: { border: 0, background: 'transparent', cursor: 'pointer', fontWeight: 700, color: 'inherit' }, onclick: async () => {
-              try { await api('timetable', { method: 'POST', body: { action: 'delete_entry', timetable_id: e.timetable_id } }); TT.entries = null; TT.semesters = null; render(); } catch (err) { toast(err.message); }
-            } }, '×')))));
-      })));
+  // ---- saved timetable
+  if (!TT.entries.length) {
+    app.appendChild(h('div', { class: 'card', style: { padding: '32px', textAlign: 'center', color: '#4F5D5A', borderStyle: 'dashed' } }, 'No timetable saved for this semester yet. Upload the department timetable above.'));
+    return;
   }
-  const ad = h('select', { class: 'in' }, h('option', { value: '' }, 'Doctor…'), S.ref.doctors.map((d) => h('option', { value: d.doctor_id }, d.display_name)));
-  const aw = h('select', { class: 'in' }, WEEKDAYS.map((d, i) => h('option', { value: i }, d)));
-  const as = h('select', { class: 'in' }, h('option', null, 'AM'), h('option', null, 'PM'));
-  const ac = h('select', { class: 'in' }, S.ref.clinics.map((c) => h('option', { value: c.clinic_id }, c.clinic_name)));
+  const byKey = new Map();
+  for (const e of TT.entries) { const k = `${e.doctor_id}|${e.weekday}|${e.session_code}`; if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(e); }
+  const used = new Set(TT.entries.map((e) => Number(e.doctor_id)));
+  const forgotten = S.ref.doctors.filter((d) => !used.has(Number(d.doctor_id)));
+  app.appendChild(h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' } },
+    statCard('Doctors', used.size), statCard('Sessions captured', TT.entries.length), statCard('Not in the timetable', forgotten.length, forgotten.length ? '#8A4B0F' : null),
+    statCard('Status', sem.confirmed_at ? 'Confirmed' : 'Not confirmed', sem.confirmed_at ? '#1F5145' : '#7A1E2C')));
+  if (forgotten.length) app.appendChild(h('div', { class: 'msg', style: { background: '#FFF4E5', color: '#8A4B0F' } }, `Not in this timetable: ${forgotten.map((d) => d.display_name).join(', ')}. That is fine if they have no clinics this semester.`));
   app.appendChild(h('section', { class: 'card', style: { overflow: 'hidden' } },
-    h('div', { class: 'card-head' }, h('h2', null, `${TT.entries.length} entries`), h('span', { class: 'note' }, 'Tap × to remove an entry')),
-    h('div', { class: 'scroll-x' }, h('table', { class: 'grid', style: { minWidth: '900px', fontSize: '13px' } },
-      h('thead', null, h('tr', null, h('th', { scope: 'col' }, ''), WEEKDAYS.map((d) => h('th', { scope: 'col' }, d)))), tbody)),
-    h('div', { class: 'daynav', style: { justifyContent: 'flex-start' } }, h('b', null, 'Add'), ad, aw, as, ac,
-      h('button', { type: 'button', class: 'btn small dark', onclick: async () => {
-        try { await api('timetable', { method: 'POST', body: { action: 'add_entry', semester_id: TT.sel, doctor_id: Number(ad.value), weekday: Number(aw.value), session: as.value, clinic_id: Number(ac.value) } }); TT.entries = null; TT.semesters = null; render(); }
-        catch (e) { toast(e.message); }
-      } }, 'Add entry'))));
+    h('div', { class: 'card-head' }, h('h2', { style: { fontSize: '16px' } }, `Saved: ${sem.source_file || sem.semester_name}`),
+      h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, h('span', { class: 'note' }, 'Tap a box to add or remove a session'),
+        h('button', { type: 'button', class: sem.confirmed_at ? 'btn small' : 'btn small primary', onclick: async () => { try { await api('timetable', { method: 'POST', body: { action: 'confirm', semester_id: TT.sel } }); toast('Timetable confirmed. The planner will use it.'); reload(); } catch (e) { toast(e.message); } } }, sem.confirmed_at ? 'Confirmed ✓' : 'Confirm timetable'))),
+    sessionGrid({
+      doctorIds: used, editable: true,
+      isOn: (id, wd, s) => byKey.has(`${id}|${wd}|${s}`),
+      cellText: (id, wd, s) => { const l = byKey.get(`${id}|${wd}|${s}`); return l.some((e) => e.clinic_id) ? l.map((e) => e.clinic_id || '✓').join('/') : '✓'; },
+      onToggle: async (id, wd, s, on) => {
+        try {
+          if (on) for (const e of byKey.get(`${id}|${wd}|${s}`)) await api('timetable', { method: 'POST', body: { action: 'delete_entry', timetable_id: e.timetable_id } });
+          else await api('timetable', { method: 'POST', body: { action: 'add_entry', semester_id: TT.sel, doctor_id: id, weekday: wd, session: s } });
+          TT.entries = null; render();
+        } catch (e) { toast(e.message); }
+      },
+    })));
+  const ad = h('select', { class: 'in', style: { width: 'auto' } }, h('option', { value: '' }, 'Add a doctor to the grid…'), forgotten.map((d) => h('option', { value: d.doctor_id }, d.display_name)));
+  ad.addEventListener('change', async () => {
+    if (!ad.value) return;
+    try { await api('timetable', { method: 'POST', body: { action: 'add_entry', semester_id: TT.sel, doctor_id: Number(ad.value), weekday: 0, session: 'AM' } }); TT.entries = null; render(); toast('Added for Sunday AM. Tap boxes to set the right sessions.'); } catch (e) { toast(e.message); }
+  });
+  if (forgotten.length) app.appendChild(h('div', null, ad));
 };
+
+function statCard(label, value, color) {
+  return h('div', { class: 'kpi' }, h('div', { class: 'l' }, label), h('div', { class: 'v', style: { fontSize: '22px', color: color || '#17262B' } }, value));
+}
+
+function renderCapture(app) {
+  const cap = TT.cap;
+  const { docs } = refMaps();
+  const unmatched = [...new Set(cap.rows.filter((r) => !r.id).map((r) => r.raw))];
+  const guessed = [...new Map(cap.rows.filter((r) => r.id && r.how === 'guess').map((r) => [r.raw, r])).values()];
+  const present = cap.rows.filter((r) => r.id && !cap.off.has(`${r.id}|${r.wd}|${r.s}`));
+  const keySet = new Set(present.map((r) => `${r.id}|${r.wd}|${r.s}`));
+  const ids = new Set(cap.rows.filter((r) => r.id).map((r) => r.id));
+
+  app.appendChild(h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' } },
+    statCard('Doctors found', ids.size), statCard('Sessions captured', keySet.size),
+    statCard('Names to match', unmatched.length, unmatched.length ? '#7A1E2C' : '#1F5145'), statCard('Checks', cap.checks.length, cap.checks.length ? '#8A4B0F' : '#1F5145')));
+
+  // names to match
+  if (unmatched.length) {
+    const box = h('section', { style: { background: '#FFF7F6', border: '1px solid #F1B9B3', borderRadius: '12px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '10px' } },
+      h('div', { style: { color: '#7A1E2C', fontSize: '14px' } }, h('b', null, 'Match these names before saving. '), 'Pick the doctor, or add them as a new doctor. The system remembers your choice for next semester.'));
+    for (const raw of unmatched) {
+      const sample = cap.rows.find((r) => r.raw === raw);
+      const cands = (sample.candidates || []).map((id) => docs[id]).filter(Boolean);
+      const sel = h('select', { class: 'in', style: { width: 'auto', minWidth: '200px' } }, h('option', { value: '' }, 'Choose doctor…'),
+        cands.length ? h('optgroup', { label: 'Likely' }, cands.map((d) => h('option', { value: d.doctor_id }, d.display_name))) : null,
+        h('optgroup', { label: 'All doctors' }, S.ref.doctors.map((d) => h('option', { value: d.doctor_id }, d.display_name))));
+      sel.addEventListener('change', async () => {
+        const id = Number(sel.value); if (!id) return;
+        try { await api('timetable', { method: 'POST', body: { action: 'save_alias', alias: raw, doctor_id: id } }); } catch (e) { toast(e.message); return; }
+        TT.aliases[normAlias(raw)] = id;
+        cap.rows.forEach((r) => { if (r.raw === raw) { r.id = id; r.how = 'remembered'; } });
+        render();
+      });
+      const catSel = h('select', { class: 'in', style: { width: 'auto' } }, CAT_ORDER.map((c) => h('option', { value: c }, c)));
+      catSel.value = groupToCat(sample.group) || 'FC';
+      const add = h('button', { type: 'button', class: 'btn small', onclick: async () => {
+        const shortName = raw.replace(/^(dr|prof)\.?\s*/i, '').split(/\s+/)[0];
+        const name = prompt('Name to show on the board (keep it short, like the others):', `${/^prof/i.test(raw) ? 'Prof.' : 'Dr.'} ${shortName.charAt(0).toUpperCase()}${shortName.slice(1)}`);
+        if (!name) return;
+        try {
+          const r = await api('timetable', { method: 'POST', body: { action: 'add_doctor', display_name: name, category_code: catSel.value, alias: raw } });
+          S.ref.doctors.push(r.doctor); S.ref._maps = null;
+          TT.aliases[normAlias(raw)] = Number(r.doctor.doctor_id);
+          cap.rows.forEach((x) => { if (x.raw === raw) { x.id = Number(r.doctor.doctor_id); x.how = 'new'; } });
+          toast(`${r.doctor.display_name} added.`); render();
+        } catch (e) { toast(e.message); }
+      } }, 'Add as new doctor');
+      box.appendChild(h('div', { style: { background: '#fff', border: '1px solid #F1D3CF', borderRadius: '10px', padding: '10px 12px', display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' } },
+        h('b', { style: { minWidth: '180px' } }, raw), h('span', { class: 'note' }, sample.group ? `(${sample.group})` : ''), sel, h('span', { class: 'note' }, 'or'), catSel, add));
+    }
+    app.appendChild(box);
+  }
+
+  // guesses to confirm (shown, editable)
+  if (guessed.length) {
+    app.appendChild(h('details', { class: 'card pad' }, h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, `${guessed.length} name(s) matched by best guess — tap to review`),
+      h('ul', { class: 'plain' }, guessed.map((r) => {
+        const sel = h('select', { class: 'in', style: { width: 'auto', height: '34px' } }, S.ref.doctors.map((d) => h('option', { value: d.doctor_id }, d.display_name)));
+        sel.value = r.id;
+        sel.addEventListener('change', async () => {
+          const id = Number(sel.value);
+          try { await api('timetable', { method: 'POST', body: { action: 'save_alias', alias: r.raw, doctor_id: id } }); } catch (e) { toast(e.message); return; }
+          TT.aliases[normAlias(r.raw)] = id; cap.rows.forEach((x) => { if (x.raw === r.raw) { x.id = id; x.how = 'remembered'; } }); render();
+        });
+        return h('li', { style: { display: 'flex', gap: '10px', alignItems: 'center', fontSize: '13px' } }, h('span', { style: { minWidth: '200px' } }, r.raw), '→', sel);
+      }))));
+  }
+
+  // checks
+  if (cap.checks.length) app.appendChild(h('section', { class: 'card pad' }, h('h2', { style: { fontSize: '16px' } }, 'Checks'),
+    h('ul', { class: 'plain' }, cap.checks.map((c) => h('li', { class: 'msg', style: { background: '#FFF4E5', color: '#8A4B0F', padding: '8px 10px' } }, c)))));
+
+  // grid + save
+  const save = async (confirmToo) => {
+    if (unmatched.length && !confirm(`${unmatched.length} name(s) are not matched and will be left out. Save anyway?`)) return;
+    try {
+      const rows = present.map((r) => ({ doctor_id: r.id, weekday: r.wd, session: r.s, clinic_id: r.clinic || null }));
+      const r = await api('timetable', { method: 'POST', body: { action: 'import', semester_id: TT.sel, source_file: cap.file, rows } });
+      if (confirmToo) await api('timetable', { method: 'POST', body: { action: 'confirm', semester_id: TT.sel } });
+      toast(`Saved ${r.saved} sessions${confirmToo ? ' and confirmed' : ''}.`);
+      TT.cap = null; TT.semesters = null; TT.entries = null; render();
+    } catch (e) { toast(e.message); }
+  };
+  app.appendChild(h('section', { class: 'card', style: { overflow: 'hidden' } },
+    h('div', { class: 'card-head' }, h('h2', { style: { fontSize: '16px' } }, `Captured: ${cap.file}`),
+      h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+        h('button', { type: 'button', class: 'btn small', onclick: () => { TT.cap = null; render(); } }, 'Discard'),
+        h('button', { type: 'button', class: 'btn small', onclick: () => save(false) }, 'Save only'),
+        h('button', { type: 'button', class: 'btn small primary', onclick: () => save(true) }, 'Save & confirm timetable'))),
+    h('div', { class: 'note', style: { padding: '8px 20px 0' } }, 'Dark box = present in that session. Tap a box to remove or add a session before saving.'),
+    sessionGrid({
+      doctorIds: ids, editable: true,
+      isOn: (id, wd, s) => keySet.has(`${id}|${wd}|${s}`),
+      onToggle: (id, wd, s, on) => {
+        const k = `${id}|${wd}|${s}`;
+        if (on) cap.off.add(k);
+        else if (cap.off.has(k)) cap.off.delete(k);
+        else cap.rows.push({ raw: (docs[id] || {}).display_name, group: null, wd, s, id, how: 'manual' });
+        render();
+      },
+    })));
+}
 
 // =====================================================================================
 // WORKLOAD & ROTATIONS (incl. surgery history)

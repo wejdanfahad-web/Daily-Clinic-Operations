@@ -484,7 +484,7 @@ CREATE TABLE doctor_timetable (
   doctor_id      NUMBER(10)   NOT NULL,
   weekday        NUMBER(1)    NOT NULL,                 -- 0 = Sunday … 4 = Thursday
   session_code   VARCHAR2(3)  NOT NULL,
-  clinic_id      NUMBER(3)    NOT NULL,
+  clinic_id      NUMBER(3),                            -- optional: the department timetable lists who is present, not clinics
   CONSTRAINT doc_tt_pk        PRIMARY KEY (timetable_id),
   CONSTRAINT doc_tt_sem_fk    FOREIGN KEY (semester_id) REFERENCES semesters (semester_id),
   CONSTRAINT doc_tt_doc_fk    FOREIGN KEY (doctor_id)   REFERENCES doctors (doctor_id),

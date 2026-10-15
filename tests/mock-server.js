@@ -12,8 +12,16 @@ const categories = [
   ['PG4', 'Postgraduate year 4', '#8DB8EA', '#0B2442'], ['BD1', 'Board year 1', '#E2F4EB', '#124434'], ['BD2', 'Board year 2', '#C3E6D4', '#124434'],
   ['BD3', 'Board year 3', '#9ED3B9', '#0C362A'], ['FC', 'Faculty', '#F4E3C4', '#5E3D06'], ['SP', 'Specialist', '#E4EAC5', '#434B0D'],
 ].map(([category_code, category_name, chip_bg, chip_fg]) => ({ category_code, category_name, chip_bg, chip_fg }));
-const doctors = [['Dr. Reema', 'PG4'], ['Dr. Yazeed', 'BD3'], ['Dr. Muhannad', 'BD2'], ['Dr. Nada', 'BD1'], ['Dr. Abdullah B', 'BD1'], ['Prof. Ahmed', 'FC', 2], ['Dr. Alaa', 'SP'], ['Dr. Heba', 'PG1'], ['Dr. Talal', 'BD3'], ['Dr. New', null]]
-  .map(([display_name, category_code, max = 1], i) => ({ doctor_id: i + 1, display_name, category_code, max_assistants: max }));
+const DOC_LIST = {
+  FC: ['Dr. Maha', 'Prof. Fahd S', 'Dr. Abdullah R', 'Dr. Hussam', 'Prof. Fahad J', 'Dr. Mazen', 'Dr. Muath', 'Dr. Khaled Alamnei', 'Dr. Riyadh', 'Dr. Abdullah Q', 'Dr. Anas', 'Dr. Khalid Almadhi', 'Dr. Ibrahim', 'Dr. Ziyad', 'Prof. Ahmed', 'Prof. Obaida', 'Prof. Sara', 'Prof. Sulaiman', 'Prof. Alhadlaq', 'Prof. Aljarbou', 'Prof. Alsubait'],
+  SP: ['Dr. Alaa', 'Dr. Nouf', 'Dr. Mohammed T', 'Dr. Abdullah S', 'Dr. Ahmed Z'],
+  PG4: ['Dr. Reema', 'Dr. Noura H', 'Dr. Aljohara', 'Dr. Basmah'], BD3: ['Dr. Yazeed', 'Dr. Talal', 'Dr. Abdulrahman K', 'Dr. Hussain'],
+  BD2: ['Dr. Ghaida', 'Dr. Abdulaziz', 'Dr. Muhannad', 'Dr. Noura R'], PG3: ['Dr. Yara', 'Dr. Rafal'], PG2: ['Dr. Noura K', 'Dr. Noura A', 'Dr. Marwa'],
+  PG1: ['Dr. Heba', 'Dr. Moayad', 'Dr. Asmaa'], BD1: ['Dr. Nada', 'Dr. Abdullah B'],
+};
+const doctors = [];
+for (const [cat, names] of Object.entries(DOC_LIST)) for (const n of names) doctors.push({ doctor_id: doctors.length + 1, display_name: n, category_code: cat, max_assistants: n === 'Prof. Ahmed' ? 2 : 1 });
+const DID = (n) => doctors.find((d) => d.display_name === n).doctor_id;
 const staffNames = ['Rhoda', 'Saada', 'Nawal', 'Victoria', 'Raniya', 'Sharifah', 'Waad', 'Haifa', 'Deema', 'Aisha', 'Eman', 'Shouq', 'Muluk', 'Tahani', 'Zahraa', 'Leena', 'Abdulmohsen'];
 const staff = staffNames.map((n, i) => ({ staff_id: i + 1, display_name: n, home_clinic_id: i + 2, staff_type: ['Victoria', 'Eman', 'Abdulmohsen'].includes(n) ? 'STAFF_NURSE' : 'DENTAL_ASSISTANT', employment_status: 'ACTIVE' }));
 const clinics = Array.from({ length: 18 }, (_, i) => ({ clinic_id: i + 2, clinic_name: 'Clinic ' + (i + 2) }));
@@ -37,12 +45,12 @@ function addRow(r, by = 'seed') {
   logs.push(row); return row;
 }
 // seed today
-[[8, 'AM', 'CLINIC', 1], [8, 'PM', 'CLINIC', 3], [1, 'AM', 'CLINIC', 6], [2, 'AM', 'CLINIC', 6], [3, 'AM', 'VITALS'], [3, 'PM', 'CLINIC', 4, 5], [4, 'DAY', 'ON_LEAVE'],
- [5, 'AM', 'IN_CHARGE'], [5, 'PM', 'CLINIC', 7], [6, 'AM', 'CLINIC', 8], [7, 'PM', 'EXCUSE']].forEach(([s, sess, t, d, c]) => addRow({ work_date: today, session: sess, staff_id: s, type_code: t, doctor_id: d, clinic_id: c }));
-const g = ++grpSeq; addRow({ work_date: today, session: 'PM', staff_id: 13, type_code: 'SURGERY', doctor_id: 2, group: g }); addRow({ work_date: today, session: 'PM', staff_id: 13, type_code: 'SURGERY', doctor_id: 3, group: g });
+[[8, 'AM', 'CLINIC', 'Dr. Reema'], [8, 'PM', 'CLINIC', 'Dr. Muhannad'], [1, 'AM', 'CLINIC', 'Prof. Ahmed'], [2, 'AM', 'CLINIC', 'Prof. Ahmed'], [3, 'AM', 'VITALS'], [3, 'PM', 'CLINIC', 'Dr. Nada', 5], [4, 'DAY', 'ON_LEAVE'],
+ [5, 'AM', 'IN_CHARGE'], [5, 'PM', 'CLINIC', 'Dr. Alaa'], [6, 'AM', 'CLINIC', 'Dr. Heba'], [7, 'PM', 'EXCUSE']].forEach(([s, sess, t, d, c]) => addRow({ work_date: today, session: sess, staff_id: s, type_code: t, doctor_id: d ? DID(d) : null, clinic_id: c }));
+const g = ++grpSeq; addRow({ work_date: today, session: 'PM', staff_id: 13, type_code: 'SURGERY', doctor_id: DID('Dr. Yazeed'), group: g }); addRow({ work_date: today, session: 'PM', staff_id: 13, type_code: 'SURGERY', doctor_id: DID('Dr. Muhannad'), group: g });
 
 const current = () => logs.filter((r) => r.action !== 'CANCEL' && !logs.some((n) => n.supersedes_log_id === r.log_id));
-let bookings = [{ booking_id: 1, work_date: today, session_code: 'AM', note: 'needs microscope', status: 'NEW', doctor_id: 2, doctor_name: 'Dr. Yazeed', doctor_category: 'BD3', assisting_doctor_id: 3, assisting_doctor_name: 'Dr. Muhannad', assisting_category: 'BD2', assigned_staff: null }];
+let bookings = [{ booking_id: 1, work_date: today, session_code: 'AM', note: 'needs microscope', status: 'NEW', doctor_id: DID('Dr. Yazeed'), doctor_name: 'Dr. Yazeed', doctor_category: 'BD3', assisting_doctor_id: DID('Dr. Muhannad'), assisting_doctor_name: 'Dr. Muhannad', assisting_category: 'BD2', assigned_staff: null }];
 const compl = []; for (let c = 2; c <= 19; c++) for (let m = 1; m <= 9; m++) compl.push({ clinic_id: c, checklist_type: 'EQUIPMENT', month: `2026-${String(m).padStart(2, '0')}`, is_submitted: c === 12 && m > 3 ? 'N' : 'Y' });
 const steps = [[1, 'SMART goals set', '2026-03-31'], [2, 'Objectives agreed', '2026-04-12'], [3, 'Self assessment', '2026-10-29'], [4, 'Final appraisal signed', '2026-11-30']].map(([step_no, step_name, due_date]) => ({ step_no, step_name, due_date }));
 const appr = {}; staff.forEach((s) => steps.forEach((st) => { appr[`${s.staff_id}|${st.step_no}`] = st.step_no <= 2 ? 'Y' : 'N'; }));
@@ -51,8 +59,10 @@ const appr = {}; staff.forEach((s) => steps.forEach((st) => { appr[`${s.staff_id
 // ---- planner / timetable / workload / inventory (mock)
 const semesters = [{ semester_id: 1, semester_name: 'First semester 2026-27', starts_on: '2026-08-30', ends_on: '2027-01-14', source_file: 'tt.xlsx', confirmed_at: '2026-10-01 10:00', entries: 0 }];
 let ttSeq = 10;
-const timetable = [[1, 0, 'AM', 2], [1, 0, 'AM', 3], [2, 0, 'PM', 12], [3, 0, 'AM', 4], [4, 0, 'AM', 5], [5, 0, 'PM', 5], [7, 0, 'PM', 9], [8, 0, 'AM', 9], [9, 0, 'AM', 7]]
-  .map(([doctor_id, weekday, session_code, clinic_id]) => ({ timetable_id: ++ttSeq, semester_id: 1, doctor_id, weekday, session_code, clinic_id }));
+const timetable = [['Prof. Ahmed', 0, 'AM', 2], ['Prof. Ahmed', 0, 'AM', 3], ['Dr. Yazeed', 0, 'PM', 12], ['Dr. Nada', 0, 'AM', 4], ['Dr. Abdullah B', 0, 'AM', 5], ['Dr. Reema', 0, 'PM', 5], ['Dr. Heba', 0, 'PM', 9], ['Dr. Alaa', 0, 'AM', 9], ['Dr. Muhannad', 0, 'AM', 7]]
+  .map(([n, weekday, session_code, clinic_id]) => ({ n, weekday, session_code, clinic_id })).map(({ n, weekday, session_code, clinic_id }) => ({ doctor_id: DID(n), weekday, session_code, clinic_id })).map(({ doctor_id, weekday, session_code, clinic_id }) => ({ timetable_id: ++ttSeq, semester_id: 1, doctor_id, weekday, session_code, clinic_id }));
+const aliases = [];
+for (const m of require('fs').readFileSync(path.join(__dirname, '..', 'db', '06_timetable_presence.sql'), 'utf8').matchAll(/SELECT '([^']+)', doctor_id, 'seed' FROM doctors WHERE display_name = '([^']+)'/g)) aliases.push({ alias_norm: m[1], doctor_id: DID(m[2]) });
 const drafts = {};
 let leave = [{ leave_id: 1, staff_id: 4, staff_name: 'Victoria', from_date: '2026-10-18', to_date: '2026-10-20', session_code: null, type_code: 'ON_LEAVE', notes: null }];
 let eqSeq = 0; const equipment = [];
@@ -81,9 +91,11 @@ function extraApi(req, res, p, q, body, need) {
   }
   if (p === 'timetable') {
     if (!need('ADMIN')) return true;
-    if (req.method === 'GET') { send(res, 200, { semesters: semesters.map((s) => ({ ...s, entries: timetable.length })), entries: q.semester_id ? timetable.map((t) => ({ ...t, doctor_name: D[t.doctor_id].display_name, category_code: D[t.doctor_id].category_code, max_assistants: D[t.doctor_id].max_assistants })) : [] }); return true; }
-    if (body.action === 'import') { timetable.length = 0; body.rows.forEach((r) => timetable.push({ timetable_id: ++ttSeq, semester_id: 1, doctor_id: r.doctor_id, weekday: r.weekday, session_code: r.session, clinic_id: r.clinic_id })); semesters[0].confirmed_at = null; send(res, 200, { ok: true, saved: body.rows.length }); return true; }
-    if (body.action === 'add_entry') { timetable.push({ timetable_id: ++ttSeq, semester_id: 1, doctor_id: body.doctor_id, weekday: body.weekday, session_code: body.session, clinic_id: body.clinic_id }); send(res, 200, { ok: true }); return true; }
+    if (body.action === 'save_alias') { aliases.push({ alias_norm: body.alias.toLowerCase(), doctor_id: body.doctor_id }); send(res, 200, { ok: true }); return true; }
+    if (body.action === 'add_doctor') { const d = { doctor_id: doctors.length + 1, display_name: body.display_name, category_code: body.category_code, max_assistants: 1 }; doctors.push(d); D[d.doctor_id] = d; send(res, 200, { ok: true, doctor: d }); return true; }
+    if (req.method === 'GET') { send(res, 200, { aliases, semesters: semesters.map((s) => ({ ...s, entries: timetable.length })), entries: q.semester_id ? timetable.map((t) => ({ ...t, doctor_name: D[t.doctor_id].display_name, category_code: D[t.doctor_id].category_code, max_assistants: D[t.doctor_id].max_assistants })) : [] }); return true; }
+    if (body.action === 'import') { timetable.length = 0; body.rows.forEach((r) => timetable.push({ timetable_id: ++ttSeq, semester_id: 1, doctor_id: r.doctor_id, weekday: r.weekday, session_code: r.session, clinic_id: r.clinic_id || null })); semesters[0].confirmed_at = null; send(res, 200, { ok: true, saved: body.rows.length }); return true; }
+    if (body.action === 'add_entry') { timetable.push({ timetable_id: ++ttSeq, semester_id: 1, doctor_id: body.doctor_id, weekday: body.weekday, session_code: body.session, clinic_id: body.clinic_id || null }); send(res, 200, { ok: true }); return true; }
     if (body.action === 'delete_entry') { const i = timetable.findIndex((t) => t.timetable_id === body.timetable_id); if (i >= 0) timetable.splice(i, 1); send(res, 200, { ok: true }); return true; }
     if (body.action === 'confirm') { semesters[0].confirmed_at = today + ' 20:00'; send(res, 200, { ok: true }); return true; }
     if (body.action === 'create_semester') { semesters.unshift({ semester_id: 2, semester_name: body.semester_name, starts_on: body.starts_on, ends_on: body.ends_on, confirmed_at: null }); send(res, 200, { ok: true, semester_id: 2 }); return true; }
