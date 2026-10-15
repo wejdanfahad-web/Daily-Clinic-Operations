@@ -78,8 +78,7 @@ DECLARE
   l_busy    VARCHAR2(60);
   l_active  NUMBER;
 BEGIN
-  -- serialise bookings so the slot counts below can't race
-  SELECT session_code INTO l_lock FROM session_times WHERE session_code = 'AM' FOR UPDATE;
+  SELECT session_code INTO l_lock FROM session_times WHERE session_code = 'AM' FOR UPDATE; /* serialise bookings */
 
   SELECT COUNT(*) INTO l_active FROM doctors WHERE doctor_id IN (:doc, :asst) AND is_active = 'Y';
   IF l_active < 2 THEN RAISE_APPLICATION_ERROR(-20030, 'One of the doctors is not on the active list.'); END IF;

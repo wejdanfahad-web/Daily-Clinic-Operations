@@ -62,8 +62,11 @@ async function run(statementText, binds = {}, { limit = 2000 } = {}) {
     // ORA-20000..20999 are our own business-rule messages: show them to the user as-is.
     if (code && code >= 20000 && code <= 20999) throw new DbError(message, { status: 400, oraCode: code });
     if (code === 1) throw new DbError('That record already exists.', { status: 409, oraCode: code });
-    console.error('DB error', item.errorDetails || item.errorMessage);
-    throw new DbError('Database error' + (code ? ' (ORA-' + code + ')' : ''), { oraCode: code });
+    const details = item.errorDetails || item.errorMessage || '';
+    console.error('DB error', details, '\nSQL:', statementText.slice(0, 400));
+    // ORA-06550 wraps the real cause (e.g. "PL/SQL: ORA-00904: ... invalid identifier"); surface it.
+    const inner = /(?:PLS|ORA)-(?!06550)\d{5}:[^\n]*/.exec(details.replace(/^[\s\S]*?ORA-06550[^\n]*\n?/, ''));
+    throw new DbError('Database error' + (code ? ' (ORA-' + String(code).padStart(5, '0') + ')' : '') + (inner ? ': ' + inner[0].trim().slice(0, 160) : ''), { oraCode: code });
   }
   if (item.resultSet) return (item.resultSet.items || []).map(lowerKeys);
   return item.result !== undefined ? item.result : null;

@@ -583,7 +583,7 @@ function bookSurgeryCard() {
       if (isCic()) { S.bookings = null; render(); }
     } catch (e) { err.textContent = e.message; err.hidden = false; }
     send.disabled = false;
-  } }, 'Send to CIC');
+  } }, 'Submit booking');
 
   return h('section', { class: 'card pad', 'aria-label': 'Book a surgery slot' },
     h('div', { class: 'row-between' }, h('h2', null, 'Book a surgery slot'), h('span', { class: 'pill surg' }, 'FOR DOCTORS')),
