@@ -11,7 +11,8 @@ const errorBox = (text) => h('div', { class: 'msg bad', role: 'alert' }, text);
 function draftChips(entry, homeClinic) {
   const { types, docs } = refMaps();
   const t = types[entry.type_code] || { category: 'DUTY', type_name: entry.type_code };
-  if (entry.type_code === 'SURGERY') return [h('span', { class: 'chip surg' }, 'Surgery · ' + (entry.doctor_ids || []).map((d) => (docs[d] || {}).display_name || '?').join(' + '))];
+  if (entry.type_code === 'SURGERY') return [h('span', { class: 'chip surg', title: 'Surgery' }, (entry.doctor_ids || []).map((d) => (docs[d] || {}).display_name || '?').join(' + '),
+    entry.clinic_id ? h('span', { class: 'tag' }, 'Cl ' + entry.clinic_id) : null)];
   if (entry.type_code === 'IN_CHARGE') return [h('span', { class: 'chip charge' }, bellIcon(), 'In charge')];
   if (t.category === 'UNAVAILABLE') return [h('span', { class: 'chip off' }, t.type_name)];
   if (t.category === 'DUTY') return [h('span', { class: 'chip duty' }, t.type_name + (entry.notes ? ' · ' + entry.notes : ''))];
@@ -38,7 +39,7 @@ function entryEditor({ title, entries, homeClinic, staffList, onSave, onMove, us
         const moveSel = onMove && staffList ? h('select', { class: 'in', style: { height: '36px', width: 'auto' }, 'aria-label': 'Move to' },
           h('option', { value: '' }, 'Move to…'), staffList.map((s) => h('option', { value: s.staff_id }, s.display_name))) : null;
         if (moveSel) moveSel.addEventListener('change', () => { if (moveSel.value) { onMove(e, Number(moveSel.value)); close(); } });
-        const clinical = (types[e.type_code] || {}).category === 'CLINICAL';
+        const clinical = (types[e.type_code] || {}).category === 'CLINICAL' || e.type_code === 'SURGERY';
         const clinicSel = clinical ? h('select', { class: 'in', style: { height: '36px', width: 'auto' }, 'aria-label': 'Clinic' },
           S.ref.clinics.map((c) => h('option', { value: c.clinic_id }, 'Cl ' + c.clinic_id))) : null;
         if (clinicSel) {
@@ -82,7 +83,7 @@ function entryEditor({ title, entries, homeClinic, staffList, onSave, onMove, us
       const t = types[typeSel.value];
       doc1L.hidden = !(t && t.needs_doctor === 'Y');
       doc2L.hidden = typeSel.value !== 'SURGERY';
-      clinicL.hidden = !(t && t.category === 'CLINICAL');
+      clinicL.hidden = !(t && (t.category === 'CLINICAL' || typeSel.value === 'SURGERY'));
     };
     typeSel.addEventListener('change', sync); sync();
     const add = h('button', { type: 'button', class: 'btn small', onclick: () => {
@@ -210,7 +211,7 @@ function plannerChecks() {
           docUse.get(d).add(Number(s.staff_id));
           if (t && t.category === 'CLINICAL') clinDocs.push(d);
         }
-        if (t && t.category === 'CLINICAL' && e.clinic_id) {
+        if (t && (t.category === 'CLINICAL' || e.type_code === 'SURGERY') && e.clinic_id) {
           if (!clinicUse.has(e.clinic_id)) clinicUse.set(e.clinic_id, new Set());
           clinicUse.get(e.clinic_id).add(Number(s.staff_id));
         }

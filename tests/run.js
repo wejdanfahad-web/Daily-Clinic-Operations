@@ -204,6 +204,20 @@ function ev(method, { body, query, cookie } = {}) {
     assert.deepStrictEqual(blk.binds.filter((b) => /^e0_r/.test(b.name)).map((b) => b.value), ['abc:0:0', 'abc:0:1']);
   });
 
+  await t('assign: move a surgery (both doctors) to another clinic in one change, kept as one group', async () => {
+    const types = [{ TYPE_CODE: 'SURGERY', NEEDS_DOCTOR: 'Y', NOTIFY_ON_ASSIGN: 'N', TYPE_NAME: 'Surgery' }];
+    responder = (sql) => /FROM assignment_types/.test(sql) ? rows(types) : /v_assignment_history/.test(sql) ? rows([]) : done();
+    calls.length = 0;
+    let r = await F('assign')(ev('POST', { cookie: cic, body: { work_date: '2026-10-20', entries: [{ session: 'AM', staff_id: 7, type_code: 'SURGERY', doctor_ids: [3, 8], supersedes_log_ids: [41], clinic_id: 12, action: 'AMEND' }] } }));
+    assert.strictEqual(r.statusCode, 400, 'each doctor needs the row it replaces');
+    r = await F('assign')(ev('POST', { cookie: cic, body: { work_date: '2026-10-20', entries: [{ session: 'AM', staff_id: 7, type_code: 'SURGERY', doctor_ids: [3, 8], supersedes_log_ids: [41, 42], clinic_id: 12, action: 'AMEND' }] } }));
+    assert.strictEqual(r.statusCode, 200, r.body);
+    const blk = calls.find((c) => /DECLARE/.test(c.statementText));
+    assert.strictEqual((blk.statementText.match(/NEXTVAL/g) || []).length, 1, 'one group id');
+    const v = (n) => blk.binds.find((b) => b.name === n).value;
+    assert.strictEqual(v('e0_sup0'), 41); assert.strictEqual(v('e0_sup1'), 42); assert.strictEqual(v('e0_c'), 12);
+  });
+
   await t('assign: in-charge staff cannot edit another day', async () => {
     responder = () => rows([{ SESSION_CODE: 'AM' }]);
     const r = await F('assign')(ev('POST', { cookie: staff, body: { work_date: '2030-01-06', entries: [{ session: 'AM', staff_id: 5, type_code: 'VITALS' }] } }));
@@ -277,7 +291,7 @@ function ev(method, { body, query, cookie } = {}) {
     const blk = calls.find((c) => /DECLARE/.test(c.statementText) && /assignment_logs/.test(c.statementText));
     const actions = blk.binds.filter((b) => /^e\d+_a$/.test(b.name)).map((b) => b.value);
     assert.deepStrictEqual(actions, ['CANCEL', 'ASSIGN'], 'AM unchanged; PM clinic cancelled, Vitals added');
-    assert.strictEqual(blk.binds.find((b) => b.name === 'e0_sup').value, 2);
+    assert.strictEqual(blk.binds.find((b) => b.name === 'e0_sup0').value, 2);
   });
 
   await t('planner: staff cannot use it', async () => {

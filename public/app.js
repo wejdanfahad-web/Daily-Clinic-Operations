@@ -234,7 +234,8 @@ function chipFor(group, homeClinic) {
   const { types } = refMaps();
   const t = types[first.type_code] || { category: first.category, type_name: first.type_name };
   if (first.type_code === 'SURGERY') {
-    return [h('span', { class: 'chip surg' }, 'Surgery · ' + group.map((g) => g.doctor_name).filter(Boolean).join(' + '))];
+    return [h('span', { class: 'chip surg', title: 'Surgery' }, group.map((g) => g.doctor_name).filter(Boolean).join(' + '),
+      first.clinic_id ? h('span', { class: 'tag' }, 'Cl ' + first.clinic_id) : null)];
   }
   if (first.type_code === 'IN_CHARGE') return [h('span', { class: 'chip charge' }, bellIcon(), 'In charge')];
   if (t.category === 'UNAVAILABLE') return [h('span', { class: 'chip off' }, t.type_name || first.type_name)];
@@ -410,12 +411,32 @@ function editCell(m, sess) {
       });
       return sel;
     };
+    const groupClinicPicker = (g) => {
+      const sel = h('select', { class: 'in', style: { height: '34px', width: 'auto', fontSize: '13px' }, 'aria-label': 'Surgery clinic' },
+        h('option', { value: '' }, 'Clinic…'), S.ref.clinics.map((c) => h('option', { value: c.clinic_id }, 'Cl ' + c.clinic_id)));
+      sel.value = g[0].clinic_id || '';
+      sel.addEventListener('change', async () => {
+        if (!sel.value) return;
+        sel.disabled = true;
+        try {
+          await api('assign', { method: 'POST', body: { work_date: date, client_request_id: crypto.randomUUID(), entries: [{
+            session: g[0].session_code, staff_id: g[0].staff_id, type_code: g[0].type_code,
+            doctor_ids: g.map((r) => r.doctor_id).filter(Boolean), supersedes_log_ids: g.filter((r) => r.doctor_id).map((r) => r.log_id),
+            clinic_id: Number(sel.value), notes: g[0].notes || null, action: 'AMEND' }] } });
+          close(); toast(`Surgery set to Clinic ${sel.value}.`); await refreshBoard();
+        } catch (err) { showErr(err.message); sel.disabled = false; }
+      });
+      return sel;
+    };
     for (const g of current) {
       const clinical = (types[g[0].type_code] || {}).category === 'CLINICAL';
       const label = clinical
         ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, g.map((r) => h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
             h('span', { class: 'chip', style: catStyle(r.doctor_category) }, h('span', { class: 'cat' }, catLabel(r.doctor_category)), r.doctor_name), h('span', { class: 'note' }, 'in'), clinicPicker(r))))
-        : chipFor(g, m.staff.home_clinic_id);
+        : g[0].type_code === 'SURGERY'
+          ? h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+              h('span', { class: 'chip surg', title: 'Surgery' }, g.map((r) => r.doctor_name).filter(Boolean).join(' + ')), h('span', { class: 'note' }, 'in'), groupClinicPicker(g))
+          : chipFor(g, m.staff.home_clinic_id);
       cur.appendChild(h('div', { class: 'item' }, h('div', { class: 'cell' }, label),
         h('button', { type: 'button', class: 'btn small danger', onclick: async () => {
           try {
@@ -441,7 +462,7 @@ function editCell(m, sess) {
     const clinicSel = h('select', { class: 'in' }, S.ref.clinics.map((c) => h('option', { value: c.clinic_id }, c.clinic_name)));
     clinicSel.value = m.staff.home_clinic_id || '';
     // double clinic: if she already works in her own clinic this session, suggest the first free clinic
-    const usedNow = new Set(S.board.assignments.filter((a) => a.category === 'CLINICAL' && a.clinic_id && (a.session_code === sess || a.session_code === 'DAY')).map((a) => Number(a.clinic_id)));
+    const usedNow = new Set(S.board.assignments.filter((a) => (a.category === 'CLINICAL' || a.type_code === 'SURGERY') && a.clinic_id && (a.session_code === sess || a.session_code === 'DAY')).map((a) => Number(a.clinic_id)));
     if (current.some((g) => g.some((r) => r.category === 'CLINICAL' && Number(r.clinic_id) === Number(m.staff.home_clinic_id)))) {
       const freeClinic = S.ref.clinics.find((c) => !usedNow.has(Number(c.clinic_id)));
       if (freeClinic) clinicSel.value = freeClinic.clinic_id;
@@ -459,7 +480,7 @@ function editCell(m, sess) {
       doc1Label.hidden = !needsDoc;
       doc1Label.firstChild.textContent = typeSel.value === 'SURGERY' ? 'Operator' : 'Doctor';
       doc2Label.hidden = typeSel.value !== 'SURGERY';
-      clinicLabel.hidden = !(t && t.category === 'CLINICAL');
+      clinicLabel.hidden = !(t && (t.category === 'CLINICAL' || typeSel.value === 'SURGERY'));
       dayLabel.hidden = !(t && (t.category === 'UNAVAILABLE' || t.category === 'DUTY'));
     };
     typeSel.addEventListener('change', sync);
@@ -710,6 +731,11 @@ async function upcomingSurgeriesCard() {
     } catch { /* show queue order without the skip */ }
     const candidates = queue.filter((q) => !busy.has(Number(q.staff_id)));
     const pick = h('select', { class: 'in', style: { height: '36px' } }, candidates.map((q, i) => h('option', { value: q.staff_id }, `${q.staff_name} · ${q.total_count} surgeries${i === 0 ? ' (next in line)' : ''}`)));
+    const staffById = refMaps().staff;
+    const clinicPick = h('select', { class: 'in', style: { height: '36px' }, 'aria-label': 'Surgery clinic' },
+      S.ref.clinics.map((c) => h('option', { value: c.clinic_id }, c.clinic_name)));
+    const syncClinic = () => { const s = staffById[pick.value]; if (s && s.home_clinic_id) clinicPick.value = s.home_clinic_id; };
+    pick.addEventListener('change', syncClinic); syncClinic();
     const assigned = b.status === 'ASSIGNED';
     const li = h('li', { class: 'booking' + (b.status === 'NEW' ? ' new' : '') },
       h('div', { class: 'row-between' }, h('b', null, `${fmtDay(b.work_date)} · ${b.session_code}`), h('span', { class: 'status ' + (assigned ? 'done' : b.status === 'NEW' ? 'new' : '') }, assigned ? 'Assigned' : b.status === 'NEW' ? 'New' : 'Seen')),
@@ -721,11 +747,11 @@ async function upcomingSurgeriesCard() {
       b.note ? h('div', { class: 'note' }, b.note) : null);
     if (assigned) li.appendChild(h('div', { style: { fontSize: '13px', color: '#1F5145' } }, 'Assistant: ', h('b', null, b.assigned_staff)));
     else {
-      li.appendChild(pick);
+      li.appendChild(h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Assistant', pick), h('label', { class: 'f' }, 'Clinic', clinicPick)));
       li.appendChild(h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
         h('button', { type: 'button', class: 'btn primary small', disabled: !candidates.length, onclick: async (e) => {
           e.target.disabled = true;
-          try { await api('booking-action', { method: 'POST', body: { booking_id: b.booking_id, action: 'assign', staff_id: Number(pick.value) } }); toast('Assigned and notified.'); S.bookings = null; S.queues = null; await refreshBoard(); }
+          try { await api('booking-action', { method: 'POST', body: { booking_id: b.booking_id, action: 'assign', staff_id: Number(pick.value), clinic_id: Number(clinicPick.value) || null } }); toast('Assigned and notified.'); S.bookings = null; S.queues = null; await refreshBoard(); }
           catch (err) { toast(err.message); e.target.disabled = false; }
         } }, 'Assign'),
         h('button', { type: 'button', class: 'btn small', onclick: async () => {

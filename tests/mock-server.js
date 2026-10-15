@@ -191,7 +191,7 @@ function apiHandler(req, res, url, body) {
       const out = [];
       for (const e of body.entries) {
         const grp = ++grpSeq;
-        for (const d of (e.doctor_ids && e.doctor_ids.length ? e.doctor_ids : [null])) out.push(addRow({ ...e, work_date: body.work_date, doctor_id: d, group: grp }, session.name));
+        (e.doctor_ids && e.doctor_ids.length ? e.doctor_ids : [null]).forEach((d, j) => out.push(addRow({ ...e, work_date: body.work_date, doctor_id: d, group: grp, supersedes_log_id: (e.supersedes_log_ids || [])[j] || e.supersedes_log_id }, session.name)));
       }
       return send(res, 200, { ok: true, written: out });
     }
@@ -212,7 +212,8 @@ function apiHandler(req, res, url, body) {
       if (!need('ADMIN')) return;
       const b = bookings.find((x) => x.booking_id === body.booking_id);
       if (body.action === 'cancel') b.status = 'CANCELLED';
-      if (body.action === 'assign') { b.status = 'ASSIGNED'; b.assigned_staff = ST[body.staff_id].display_name; }
+      if (body.action === 'assign') { b.status = 'ASSIGNED'; b.assigned_staff = ST[body.staff_id].display_name;
+        const g = ++grpSeq; [b.doctor_id, DID(b.assisting_doctor_name)].forEach((d) => addRow({ work_date: b.work_date, session: b.session_code, staff_id: body.staff_id, type_code: 'SURGERY', doctor_id: d, clinic_id: body.clinic_id, group: g, notes: 'Booking #' + b.booking_id }, session.name)); }
       return send(res, 200, { ok: true });
     }
     case 'compliance':

@@ -1,5 +1,5 @@
 // Shared writer for ASSIGNMENT_LOGS, used by /api/assign (single edits) and /api/planner (publish a day).
-// Entries: { session: AM|PM|DAY, staff_id, type_code, doctor_ids[], clinic_id, notes, supersedes_log_id, action }
+// Entries: { session: AM|PM|DAY, staff_id, type_code, doctor_ids[], clinic_id, notes, supersedes_log_id | supersedes_log_ids[] (one per doctor), action }
 // Nothing is ever overwritten: a change is a new AMEND/CANCEL row pointing at the row it replaces.
 const crypto = require('crypto');
 const { query, exec } = require('./db');
@@ -26,16 +26,17 @@ async function writeEntries({ workDate, entries, recordedBy, clientRequestId, ty
     if (!['AM', 'PM', 'DAY'].includes(session)) throw new HttpError(400, `Entry ${i + 1}: session must be AM, PM or DAY.`);
     const t = typeMap[e.type_code];
     if (!t) throw new HttpError(400, `Entry ${i + 1}: unknown assignment type "${e.type_code}".`);
-    const action = (e.action || (e.supersedes_log_id ? 'AMEND' : 'ASSIGN')).toUpperCase();
+    const action = (e.action || (e.supersedes_log_id || (e.supersedes_log_ids || []).length ? 'AMEND' : 'ASSIGN')).toUpperCase();
     if (!['ASSIGN', 'AMEND', 'CANCEL'].includes(action)) throw new HttpError(400, `Entry ${i + 1}: bad action.`);
-    if (action !== 'ASSIGN' && !e.supersedes_log_id) throw new HttpError(400, `Entry ${i + 1}: a change must say which row it replaces.`);
+    const sups = Array.isArray(e.supersedes_log_ids) ? e.supersedes_log_ids.map(Number) : (e.supersedes_log_id ? [Number(e.supersedes_log_id)] : []);
+    if (action !== 'ASSIGN' && !sups.length) throw new HttpError(400, `Entry ${i + 1}: a change must say which row it replaces.`);
     if (!Number(e.staff_id)) throw new HttpError(400, `Entry ${i + 1}: staff is required.`);
 
     let doctors = Array.isArray(e.doctor_ids) ? e.doctor_ids.map(Number).filter(Boolean) : [];
     if (t.needs_doctor === 'Y' && !doctors.length && action !== 'CANCEL') throw new HttpError(400, `Entry ${i + 1}: ${t.type_name} needs a doctor.`);
     if (doctors.length > 3) throw new HttpError(400, `Entry ${i + 1}: at most 3 doctors per entry.`);
     if (!doctors.length) doctors = [null];
-    if (action !== 'ASSIGN' && doctors.length > 1) throw new HttpError(400, `Entry ${i + 1}: change one row at a time.`);
+    if (action !== 'ASSIGN' && doctors.length !== sups.length) throw new HttpError(400, `Entry ${i + 1}: each changed doctor must say which row it replaces.`);
 
     const p = `e${i}_`;
     binds[p + 's'] = session;
@@ -44,15 +45,15 @@ async function writeEntries({ workDate, entries, recordedBy, clientRequestId, ty
     binds[p + 'c'] = e.clinic_id ? Number(e.clinic_id) : null;
     binds[p + 'n'] = e.notes ? String(e.notes).slice(0, 400) : null;
     binds[p + 'a'] = action;
-    binds[p + 'sup'] = e.supersedes_log_id ? Number(e.supersedes_log_id) : null;
 
     lines.push(`  l_grp := assignment_group_seq.NEXTVAL;`);
     doctors.forEach((d, j) => {
       binds[`${p}d${j}`] = d;
+      binds[`${p}sup${j}`] = sups[j] || null;
       binds[`${p}r${j}`] = `${crid}:${i}:${j}`;
       lines.push(`  INSERT INTO assignment_logs (assignment_group_id, action, supersedes_log_id, work_date, session_code, staff_id,
                                  doctor_id, clinic_id, type_code, notes, recorded_by, client_request_id)
-  VALUES (l_grp, :${p}a, :${p}sup, TO_DATE(:wd, 'YYYY-MM-DD'), :${p}s, :${p}st,
+  VALUES (l_grp, :${p}a, :${p}sup${j}, TO_DATE(:wd, 'YYYY-MM-DD'), :${p}s, :${p}st,
           :${p}d${j}, :${p}c, :${p}t, :${p}n, :by, :${p}r${j});`);
     });
   });
