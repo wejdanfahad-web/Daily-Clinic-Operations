@@ -1,0 +1,14 @@
+{
+  "name": "daily-clinic-operations",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ENDO clinic staff assignments, rotations, surgery bookings, compliance and appraisals",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node tests/run.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "web-push": "^3.6.7"
+  }
+}

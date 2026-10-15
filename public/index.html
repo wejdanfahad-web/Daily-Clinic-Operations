@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ENDO Clinic Operations · Setup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root { --ink:#17262B; --muted:#4F5D5A; --line:#DDE1DC; --bg:#F3F4F1; --card:#FFFFFF; --brand:#16302F; --teal:#0E6B66; --ok:#1F5145; --okbg:#DCEFE8; --bad:#7A1E2C; --badbg:#FBE3E1; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 'IBM Plex Sans', system-ui, sans-serif; }
+  header { background: var(--brand); color: #F3F4F1; padding: 14px 16px; }
+  header div { max-width: 880px; margin: 0 auto; }
+  header b { font-size: 16px; font-weight: 600; } header small { display: block; color: #A9C4C0; font-size: 12px; }
+  main { max-width: 880px; margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: 16px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  h2 { margin: 0 0 4px; font-size: 16px; font-weight: 600; } p { margin: 4px 0 12px; color: var(--muted); }
+  label { display: block; font-size: 12px; font-weight: 600; margin: 10px 0 4px; }
+  input, select { width: 100%; height: 44px; padding: 0 12px; border: 1px solid #C9CFC9; border-radius: 8px; font: inherit; background: #fff; }
+  button { height: 44px; padding: 0 16px; border-radius: 8px; border: 1px solid var(--brand); background: var(--brand); color: #F3F4F1; font: inherit; font-weight: 600; cursor: pointer; margin-top: 12px; }
+  button.ghost { background: #fff; color: var(--ink); border-color: #C9CFC9; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+  .msg { margin-top: 10px; padding: 8px 12px; border-radius: 8px; display: none; }
+  .msg.ok { display: block; background: var(--okbg); color: var(--ok); } .msg.bad { display: block; background: var(--badbg); color: var(--bad); }
+  .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 12px; }
+  .status { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { padding: 4px 10px; border-radius: 999px; background: #EDEFEB; font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; } th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #E6E9E4; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; } .mono { font-family: 'IBM Plex Mono', monospace; }
+  .tablewrap { overflow-x: auto; } [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header><div><b>ENDO Clinic Operations</b><small>Setup page · the full dashboard comes next</small></div></header>
+<main>
+  <section>
+    <h2>1. Database connection</h2>
+    <p>Checks that the website can reach your Oracle database.</p>
+    <div class="status" id="health"><span class="chip">Checking…</span></div>
+  </section>
+
+  <section id="bootstrapBox">
+    <h2>2. First-time CIC login</h2>
+    <p>Only works once, while the setup token is set in Netlify. Use your hospital staff ID.</p>
+    <form id="bootstrapForm">
+      <label for="bt">Setup token (BOOTSTRAP_TOKEN from Netlify)</label><input id="bt" autocomplete="off" required>
+      <div class="row">
+        <div><label for="be">Your staff ID</label><input id="be" autocomplete="username" required></div>
+        <div><label for="bp">Choose a password (8+ characters, letters and numbers)</label><input id="bp" type="password" autocomplete="new-password" required></div>
+      </div>
+      <button type="submit">Create CIC login</button>
+      <div class="msg" id="bootstrapMsg" role="status"></div>
+    </form>
+  </section>
+
+  <section id="loginBox">
+    <h2>3. Sign in</h2>
+    <form id="loginForm">
+      <div class="row">
+        <div><label for="le">Staff ID</label><input id="le" autocomplete="username" required></div>
+        <div><label for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>
+      </div>
+      <button type="submit">Sign in</button>
+      <div class="msg" id="loginMsg" role="status"></div>
+    </form>
+  </section>
+
+  <section id="pwBox" hidden>
+    <h2>Set your own password</h2>
+    <p>You signed in with a temporary password. Choose a new one to continue.</p>
+    <form id="pwForm">
+      <div class="row">
+        <div><label for="pc">Temporary password</label><input id="pc" type="password" autocomplete="current-password" required></div>
+        <div><label for="pn">New password</label><input id="pn" type="password" autocomplete="new-password" required></div>
+      </div>
+      <button type="submit">Save password</button>
+      <div class="msg" id="pwMsg" role="status"></div>
+    </form>
+  </section>
+
+  <section id="meBox" hidden>
+    <h2 id="meName"></h2>
+    <p id="meRole"></p>
+    <button class="ghost" id="logoutBtn" type="button">Sign out</button>
+  </section>
+
+  <section id="adminBox" hidden>
+    <h2>Staff logins</h2>
+    <p>Enter a staff member's hospital ID to create their login. You'll get a temporary password to give them; they change it the first time they sign in.</p>
+    <form id="staffForm" class="row">
+      <div><label for="ss">Staff member</label><select id="ss" required></select></div>
+      <div><label for="se">Their staff ID</label><input id="se" required></div>
+      <div style="align-self:end"><button type="submit">Create login</button></div>
+    </form>
+    <div class="msg" id="staffMsg" role="status"></div>
+    <div class="tablewrap" style="margin-top:12px">
+      <table><thead><tr><th>Name</th><th>Staff ID</th><th>Login</th><th>Last sign-in</th><th>Phones</th></tr></thead><tbody id="staffRows"></tbody></table>
+    </div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+async function api(path, opts = {}) {
+  const res = await fetch('/api/' + path, { credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, ...opts });
+  let data = {}; try { data = await res.json(); } catch {}
+  if (!res.ok) throw new Error(data.error || ('Error ' + res.status));
+  return data;
+}
+function show(el, text, ok) { el.textContent = text; el.className = 'msg ' + (ok ? 'ok' : 'bad'); }
+const statusLabel = { NOT_SET: 'Not set up', TEMPORARY: 'Temporary password', LOCKED: 'Locked', ACTIVE: 'Active' };
+
+async function health() {
+  try {
+    const h = await api('health');
+    const d = h.database;
+    $('health').innerHTML = '';
+    [['Connected', true], [d.staff + ' staff'], [d.doctors + ' doctors'], [d.clinics + ' clinics'], [d.assignment_rows + ' assignment rows'], ['DB time ' + d.db_time_riyadh]]
+      .forEach(([t, ok]) => { const s = document.createElement('span'); s.className = 'chip'; if (ok) { s.style.background = 'var(--okbg)'; s.style.color = 'var(--ok)'; } s.textContent = t; $('health').appendChild(s); });
+  } catch (e) {
+    $('health').innerHTML = ''; const s = document.createElement('span'); s.className = 'chip'; s.style.background = 'var(--badbg)'; s.style.color = 'var(--bad)'; s.textContent = e.message; $('health').appendChild(s);
+  }
+}
+
+async function refreshMe() {
+  const { user } = await api('me');
+  $('loginBox').hidden = !!user; $('bootstrapBox').hidden = !!user;
+  $('pwBox').hidden = !(user && user.mustChange);
+  $('meBox').hidden = !(user && !user.mustChange);
+  $('adminBox').hidden = !(user && !user.mustChange && user.role === 'ADMIN');
+  if (user) { $('meName').textContent = 'Signed in as ' + user.name; $('meRole').textContent = user.role === 'ADMIN' ? 'CIC' : (user.inCharge ? 'Staff · in charge this session' : 'Staff'); }
+  if (user && user.role === 'ADMIN' && !user.mustChange) loadStaff();
+}
+
+async function loadStaff() {
+  const { staff } = await api('staff-admin');
+  $('ss').innerHTML = staff.filter(s => s.app_role !== 'ADMIN').map(s => `<option value="${s.staff_id}">${s.display_name}</option>`).join('');
+  $('staffRows').innerHTML = '';
+  staff.forEach(s => {
+    const tr = document.createElement('tr');
+    [s.display_name, s.employee_no || '—', statusLabel[s.login_status] || s.login_status, s.last_login || '—', String(s.devices)].forEach((v, i) => {
+      const td = document.createElement('td'); td.textContent = v; if (i === 1) td.className = 'mono'; tr.appendChild(td);
+    });
+    $('staffRows').appendChild(tr);
+  });
+}
+
+$('bootstrapForm').onsubmit = async (e) => {
+  e.preventDefault();
+  try { const r = await api('bootstrap', { method: 'POST', body: JSON.stringify({ token: $('bt').value, employee_no: $('be').value, password: $('bp').value }) }); show($('bootstrapMsg'), r.message, true); }
+  catch (err) { show($('bootstrapMsg'), err.message, false); }
+};
+$('loginForm').onsubmit = async (e) => {
+  e.preventDefault();
+  try { await api('login', { method: 'POST', body: JSON.stringify({ employee_no: $('le').value, password: $('lp').value }) }); $('lp').value = ''; await refreshMe(); }
+  catch (err) { show($('loginMsg'), err.message, false); }
+};
+$('pwForm').onsubmit = async (e) => {
+  e.preventDefault();
+  try { await api('change-password', { method: 'POST', body: JSON.stringify({ current_password: $('pc').value, new_password: $('pn').value }) }); await refreshMe(); }
+  catch (err) { show($('pwMsg'), err.message, false); }
+};
+$('logoutBtn').onclick = async () => { await api('logout', { method: 'POST' }); await refreshMe(); };
+$('staffForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const name = $('ss').selectedOptions[0] ? $('ss').selectedOptions[0].textContent : '';
+  try {
+    const r = await api('staff-admin', { method: 'POST', body: JSON.stringify({ staff_id: $('ss').value, employee_no: $('se').value }) });
+    show($('staffMsg'), `Temporary password for ${name}: ${r.temporary_password} (shown once, please copy it now)`, true);
+    $('se').value = ''; loadStaff();
+  } catch (err) { show($('staffMsg'), err.message, false); }
+};
+
+health(); refreshMe().catch(() => {});
+</script>
+</body>
+</html>
