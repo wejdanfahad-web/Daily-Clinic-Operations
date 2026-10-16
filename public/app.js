@@ -5,6 +5,12 @@
 // ---------------------------------------------------------------- helpers
 const $ = (id) => document.getElementById(id);
 
+// append() would print "null" for skipped optional parts: ignore null / undefined / false
+{
+  const nativeAppend = Element.prototype.append;
+  Element.prototype.append = function (...nodes) { return nativeAppend.apply(this, nodes.filter((n) => n !== null && n !== undefined && n !== false)); };
+}
+
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
   if (attrs) {
@@ -617,8 +623,8 @@ function notifyCard() {
     INSTALL.prompt.prompt(); await INSTALL.prompt.userChoice.catch(() => null); INSTALL.prompt = null; install.hidden = true;
   } }, 'Install the app on this phone');
   INSTALL.onReady = () => { install.hidden = false; };
-  card.append(status, h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, btn, test, install),
-    isCic() ? h('a', { href: '/qr.html', target: '_blank', rel: 'noopener', class: 'note', style: { color: '#1F5145' } }, 'QR code to put the app on staff phones →') : null);
+  card.append(status, h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, btn, test, install));
+  if (isCic()) card.append(h('a', { href: '/qr.html', target: '_blank', rel: 'noopener', class: 'note', style: { color: '#1F5145' } }, 'QR code to put the app on staff phones →'));
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
   const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {

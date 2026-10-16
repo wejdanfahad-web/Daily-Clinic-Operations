@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const PUB = path.join(__dirname, '..', 'public');
-const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+const today = process.env.MOCK_TODAY || new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 
 const categories = [
   ['PG1', 'Postgraduate year 1', '#E6F1FC', '#12355E'], ['PG2', 'Postgraduate year 2', '#CDE2F8', '#12355E'], ['PG3', 'Postgraduate year 3', '#AFCEF1', '#0E2C50'],
