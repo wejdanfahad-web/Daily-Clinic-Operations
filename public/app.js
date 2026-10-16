@@ -608,7 +608,6 @@ async function dutiesCard(date) {
   if (!n.closed && !n.hidden) card.appendChild(h('div', { style: { background: '#F7F8F6', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: '#3E4B48' } },
     `Next (${fmtDay(next)}): instruments `, h('b', null, `AM ${n.instruments.AM ? n.instruments.AM.name : '—'} · PM ${n.instruments.PM ? n.instruments.PM.name : '—'}`),
     ' · crash cart ', h('b', null, n.crash.map((c) => c.name).join(' & ') || '—')));
-  card.appendChild(h('div', { class: 'hint' }, 'Fair rotation through everyone in turn. Anyone not available that session, or on Vitals (instruments only), is passed over and keeps her place. Everyone can see the duties at any time; the phone notification goes out at 7:30 AM on the day. No notifications are sent between 4:30 PM and 7:30 AM.'));
   return card;
 }
 
