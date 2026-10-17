@@ -1,25 +1,32 @@
 // Scheduled daily at 07:30 Riyadh (see netlify.toml). First delivers messages held overnight
 // (nothing is sent between 16:30 and 07:30), then the PPM alerts.
-// Sends push alerts for equipment whose PPM is due within 7 days (once) or overdue (every day),
-// to the clinic's staff and supervisors. Running daily also keeps the free database from
+// PPM alerts go to the clinic's own staff only (by home clinic): "due within 7 days" once, "overdue"
+// on the first day and then a reminder each Sunday. The CIC gets one summary on Sundays instead of
+// a copy of every clinic's alert. Running daily also keeps the free database from
 // being auto-stopped for inactivity.
 const { query } = require('./lib/db');
-const { notifyStaff, flushPending } = require('./lib/push');
-const { riyadhToday } = require('./lib/http');
+const { notifyStaff, notifyCic, flushPending, riyadhDate } = require('./lib/push');
 
 exports.handler = async () => {
   const flushed = await flushPending();
   console.log('flushed held notifications', flushed);
-  const today = riyadhToday();
+  const today = riyadhDate();
   const rows = await query(`
     SELECT equipment_id, clinic_id, clinic_name, item_name, asset_tag,
            TO_CHAR(ppm_due_date, 'YYYY-MM-DD') AS due, days_remaining, ppm_status, staff_id
-      FROM v_ppm_alert_recipients`, {}, { limit: 5000 });
+      FROM v_ppm_alert_recipients WHERE recipient_role = 'CLINIC_STAFF'`, {}, { limit: 5000 });
+  const sunday = new Date(today + 'T12:00:00Z').getUTCDay() === 0;
 
   const counts = {};
   for (const r of rows) {
     const overdue = r.ppm_status === 'OVERDUE';
-    const key = overdue ? `PPM_OVERDUE:EQ${r.equipment_id}:${r.due}:ST${r.staff_id}:${today}` : `PPM_DUE:EQ${r.equipment_id}:${r.due}:ST${r.staff_id}`;
+    const key = overdue
+      ? `PPM_OVERDUE:EQ${r.equipment_id}:${r.due}:ST${r.staff_id}${sunday ? ':WEEK:' + today : ''}`   // first day, then Sundays
+      : `PPM_DUE:EQ${r.equipment_id}:${r.due}:ST${r.staff_id}`;
+    if (overdue && !sunday) {   // already told on an earlier day (any key format) -> wait for Sunday's reminder
+      const seen = await query(`SELECT COUNT(*) AS n FROM notification_log WHERE dedupe_key LIKE :k`, { k: `PPM_OVERDUE:EQ${r.equipment_id}:${r.due}:ST${r.staff_id}%` });
+      if (seen[0] && Number(seen[0].n) > 0) { counts.ALREADY_TOLD = (counts.ALREADY_TOLD || 0) + 1; continue; }
+    }
     const res = await notifyStaff(r.staff_id, {
       eventType: overdue ? 'PPM_OVERDUE' : 'PPM_DUE',
       title: overdue ? 'PPM overdue' : 'PPM due soon',
@@ -30,6 +37,19 @@ exports.handler = async () => {
     });
     counts[res.status] = (counts[res.status] || 0) + 1;
   }
-  console.log('ppm-check', today, rows.length, 'recipients', counts);
+  // CIC: one weekly summary (Sunday 07:30), not one message per machine
+  let summary = null;
+  if (sunday) {
+    const st = await query(`
+      SELECT ppm_status, LISTAGG(DISTINCT clinic_id, ', ') WITHIN GROUP (ORDER BY clinic_id) AS clinics, COUNT(*) AS n
+        FROM v_equipment_status WHERE ppm_status IN ('OVERDUE', 'DUE_7_DAYS') AND condition_status = 'IN_SERVICE'
+       GROUP BY ppm_status`);
+    const by = Object.fromEntries(st.map((x) => [x.ppm_status, x]));
+    const parts = [];
+    if (by.OVERDUE) parts.push(`${by.OVERDUE.n} overdue (Clinic ${by.OVERDUE.clinics})`);
+    if (by.DUE_7_DAYS) parts.push(`${by.DUE_7_DAYS.n} due this week (Clinic ${by.DUE_7_DAYS.clinics})`);
+    if (parts.length) summary = await notifyCic({ eventType: 'PPM_OVERDUE', title: 'Weekly PPM summary', body: parts.join(' · '), url: '/#/inventory', dedupeKey: `PPM_SUMMARY:${today}` });
+  }
+  console.log('ppm-check', today, rows.length, 'recipients', counts, summary ? 'summary sent' : '');
   return { statusCode: 200, body: JSON.stringify({ today, recipients: rows.length, counts }) };
 };

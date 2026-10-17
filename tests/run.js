@@ -514,6 +514,26 @@ function ev(method, { body, query, cookie } = {}) {
     push._setClock(null);
   });
 
+  await t('PPM alerts: clinic staff only, overdue once then Sundays, CIC gets one weekly summary', async () => {
+    const push = require('../netlify/functions/lib/push');
+    const row = { EQUIPMENT_ID: 5, CLINIC_ID: 3, CLINIC_NAME: 'Clinic 3', ITEM_NAME: 'X-ray Unit', ASSET_TAG: '80627', DUE: '2026-02-27', DAYS_REMAINING: -200, PPM_STATUS: 'OVERDUE', STAFF_ID: 2 };
+    // Monday 08:00 Riyadh, already told before -> nothing sent
+    push._setClock(() => new Date('2026-10-19T05:00:00Z'));
+    responder = (sql) => /v_ppm_alert_recipients/.test(sql) ? rows([row]) : /dedupe_key LIKE/.test(sql) ? rows([{ N: 1 }]) : /notification_log WHERE status = 'PENDING'/.test(sql) ? rows([]) : rows([{ N: 0 }]);
+    calls.length = 0;
+    let r = JSON.parse((await F('ppm-check')({})).body);
+    assert(calls.some((c) => /recipient_role = 'CLINIC_STAFF'/.test(c.statementText)), 'supervisor copies excluded');
+    assert.strictEqual(r.counts.ALREADY_TOLD, 1);
+    // Sunday: reminder to staff + one summary to the CIC
+    push._setClock(() => new Date('2026-10-18T05:00:00Z'));
+    let cicAsked = false;
+    responder = (sql) => /v_ppm_alert_recipients/.test(sql) ? rows([row]) : /GROUP BY ppm_status/.test(sql) ? rows([{ PPM_STATUS: 'OVERDUE', CLINICS: '3, 4', N: 8 }])
+      : /app_role = 'ADMIN'/.test(sql) ? ((cicAsked = true), rows([{ STAFF_ID: 99 }])) : /push_subscriptions/.test(sql) ? rows([]) : /notification_log WHERE status = 'PENDING'/.test(sql) ? rows([]) : /COUNT/.test(sql) ? rows([{ N: 0 }]) : /^\s*(BEGIN|DECLARE)/.test(sql) ? done() : rows([]);
+    r = JSON.parse((await F('ppm-check')({})).body);
+    assert(cicAsked, 'weekly summary to the CIC');
+    push._setClock(null);
+  });
+
   await t('wrong HTTP method → 405', async () => {
     const r = await F('login')(ev('GET'));
     assert.strictEqual(r.statusCode, 405);

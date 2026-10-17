@@ -5,7 +5,12 @@ const { handler, json, parseBody, HttpError, requireUser } = require('./lib/http
 
 exports.handler = handler(['POST'], async (event) => {
   const user = requireUser(event);
-  const { subscription, label } = parseBody(event);
+  const { subscription, label, action, endpoint } = parseBody(event);
+  // signing out: this phone stops getting that person's alerts
+  if (action === 'remove') {
+    if (endpoint) await exec(`BEGIN UPDATE push_subscriptions SET is_active = 'N' WHERE endpoint = :ep AND staff_id = :sid; COMMIT; END;`, { ep: String(endpoint).slice(0, 1000), sid: user.sid });
+    return json(200, { ok: true });
+  }
   const ep = subscription && subscription.endpoint;
   const keys = (subscription && subscription.keys) || {};
   if (!ep || !/^https:\/\//.test(ep) || !keys.p256dh || !keys.auth) throw new HttpError(400, 'Invalid push subscription.');

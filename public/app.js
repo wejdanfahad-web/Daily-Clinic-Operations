@@ -214,6 +214,26 @@ function changePasswordDialog() {
 async function loadMe() {
   try { S.me = (await api('me')).user; } catch { S.me = null; }
   if (S.me && S.me.mustChange) changePasswordDialog();
+  if (S.me && !S.me.mustChange) claimDevice();
+}
+// Alerts belong to the person signed in on this phone: claim the phone on sign-in, release it on sign-out.
+async function currentSub() {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
+    const reg = await navigator.serviceWorker.getRegistration();
+    return reg ? await reg.pushManager.getSubscription() : null;
+  } catch { return null; }
+}
+async function claimDevice() {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const sub = await currentSub();
+  if (!sub) return;
+  const label = (/iPhone|iPad/.test(navigator.userAgent) ? 'iPhone' : /Android/.test(navigator.userAgent) ? 'Android' : 'Computer');
+  api('push-subscribe', { method: 'POST', body: { subscription: sub.toJSON(), label } }).catch(() => {});
+}
+async function releaseDevice() {
+  const sub = await currentSub();
+  if (sub) await api('push-subscribe', { method: 'POST', body: { action: 'remove', endpoint: sub.endpoint } }).catch(() => {});
 }
 async function loadRef() { if (!S.ref) S.ref = await api('reference'); }
 async function loadBoard(date, { live = !!S.me } = {}) {
@@ -1032,6 +1052,7 @@ async function render() {
 // ---------------------------------------------------------------- start
 $('authBtn').addEventListener('click', async () => {
   if (S.me) {
+    await releaseDevice();
     await api('logout', { method: 'POST' }).catch(() => {});
     S.me = null; S.board = null; S.date = TODAY(); S.bookings = S.queues = S.history = S.compliance = S.appraisals = S.staffAdmin = S.staffMsg = null;
     go('assign');
