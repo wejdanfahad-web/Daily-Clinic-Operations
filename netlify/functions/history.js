@@ -14,6 +14,6 @@ exports.handler = handler(['GET'], async (event) => {
       FROM v_assignment_history
      WHERE work_date BETWEEN TO_DATE(:f, 'YYYY-MM-DD') AND TO_DATE(:t, 'YYYY-MM-DD')
        AND (:sid IS NULL OR staff_id = :sid)
-     ORDER BY recorded_at DESC`, { f: from, t: to, sid: q.staff_id ? Number(q.staff_id) : null }, { limit: 5000 });
+     ORDER BY recorded_at DESC, log_id DESC`, { f: from, t: to, sid: q.staff_id ? Number(q.staff_id) : null }, { limit: 5000 });
   return json(200, { from, to, rows });
 });

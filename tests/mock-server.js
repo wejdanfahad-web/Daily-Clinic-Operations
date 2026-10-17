@@ -227,7 +227,7 @@ function apiHandler(req, res, url, body) {
       }
       return send(res, 200, { ok: true, written: out });
     }
-    case 'history': if (!need('ADMIN')) return; return send(res, 200, { from: q.from, to: q.to, rows: logs.filter((r) => r.work_date === q.from).slice().reverse() });
+    case 'history': if (!need('ADMIN')) return; return send(res, 200, { from: q.from, to: q.to, rows: logs.filter((r) => r.work_date >= q.from && r.work_date <= q.to && (!q.staff_id || r.staff_id === Number(q.staff_id))).slice().reverse() });
     case 'queues': if (!need()) return; return send(res, 200, { queues: staff.map((s, i) => ({ rotation_code: 'SURGERY', staff_id: s.staff_id, staff_name: s.display_name, total_count: i % 5, is_eligible: ['Leena', 'Saada', 'Abdulmohsen'].includes(s.display_name) ? 'N' : 'Y', queue_position: i + 1 })) });
     case 'bookings':
       if (req.method === 'POST') {

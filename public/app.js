@@ -100,6 +100,7 @@ const TABS = [
   { id: 'compliance', label: 'Daily checklists Compliance', who: 'staff' },
   { id: 'appraisals', label: 'Annual Appraisal', who: 'staff' },
   { id: 'staff', label: 'Staff & logins', who: 'cic' },
+  { id: 'log', label: 'Assignment log', who: 'cic' },
 ];
 // Extra pages register themselves here (see pages.js).
 const PAGES = {};
@@ -412,7 +413,6 @@ async function renderAssign(app) {
   side.appendChild(bookSurgeryCard());
   if (isCic()) {
     side.appendChild(await upcomingSurgeriesCard());
-    side.appendChild(await logCard(date));
   }
 }
 
@@ -578,7 +578,7 @@ function editCell(m, sess) {
 }
 
 async function refreshBoard() {
-  S.board = null; S.history = null; S.boardsCache = {};
+  S.board = null; S.history = null; S.boardsCache = {}; LOG.data = null;
   render();
 }
 
@@ -848,20 +848,52 @@ async function upcomingSurgeriesCard() {
 }
 
 // ---------- assignment log (CIC)
-async function logCard(date) {
-  const card = h('section', { class: 'card pad' }, h('div', { class: 'row-between' }, h('h2', null, 'Assignment log'), h('span', { class: 'note' }, 'Permanent · cannot be edited')));
-  try {
-    if (!S.history || S.history.from !== date) S.history = await api(`history?from=${date}&to=${date}`);
-  } catch (e) { card.appendChild(h('div', { class: 'msg bad' }, e.message)); return card; }
-  if (!S.history.rows.length) { card.appendChild(h('div', { class: 'note' }, 'Every assignment recorded for this day appears here with the time and who entered it.')); return card; }
-  const ol = h('ol', { class: 'plain log' });
-  for (const r of S.history.rows.slice(0, 60)) {
-    const verb = r.action === 'CANCEL' ? 'removed: ' : r.action === 'AMEND' ? 'changed to ' : '';
-    const what = `${r.type_name}${r.doctor_name ? ' · ' + r.doctor_name : ''}${r.clinic_id ? ' · Cl ' + r.clinic_id : ''} (${r.session_code})`;
-    ol.appendChild(h('li', null, h('span', { class: 't' }, (r.recorded_at || '').slice(11)), h('span', null, h('b', null, r.staff_name), ' → ', verb + what, h('br'), h('span', { class: 'm' }, `by ${r.recorded_by} · #${r.log_id}`))));
+// ---------------------------------------------------------------- page: assignment log (CIC)
+const LOG = { from: null, to: null, staff: '', data: null };
+async function renderLog(app) {
+  await loadRef();
+  if (!LOG.from) { LOG.to = TODAY(); LOG.from = addDays(TODAY(), -6); }
+  const key = `${LOG.from}|${LOG.to}|${LOG.staff}`;
+  if (!LOG.data || LOG.data.key !== key) {
+    app.appendChild(h('div', { class: 'loading' }, 'Loading the log…'));
+    const r = await api(`history?from=${LOG.from}&to=${LOG.to}${LOG.staff ? '&staff_id=' + LOG.staff : ''}&t=${Date.now()}`);
+    LOG.data = { key, rows: r.rows };
+    app.textContent = '';
   }
-  card.appendChild(ol);
-  return card;
+  const reload = () => { LOG.data = null; render(); };
+  const from = h('input', { class: 'in', type: 'date', value: LOG.from, onchange: (e) => { if (e.target.value) { LOG.from = e.target.value; reload(); } } });
+  const to = h('input', { class: 'in', type: 'date', value: LOG.to, onchange: (e) => { if (e.target.value) { LOG.to = e.target.value; reload(); } } });
+  const who = h('select', { class: 'in', onchange: (e) => { LOG.staff = e.target.value; reload(); } },
+    h('option', { value: '' }, 'All staff'), S.ref.staff.map((s) => h('option', { value: s.staff_id }, s.display_name)));
+  who.value = LOG.staff;
+  const quick = (label, days) => h('button', { type: 'button', class: 'btn small', onclick: () => { LOG.to = TODAY(); LOG.from = addDays(TODAY(), -days); reload(); } }, label);
+
+  app.appendChild(h('div', { class: 'page-title' }, h('h2', null, 'Assignment log'), h('span', { class: 'note' }, 'Every change to the schedule, with the date and time it was recorded and who made it. Permanent · cannot be edited.')));
+  app.appendChild(h('section', { class: 'card pad' },
+    h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end' } },
+      h('label', { class: 'f' }, 'Schedule day from', from), h('label', { class: 'f' }, 'to', to), h('label', { class: 'f' }, 'Staff', who),
+      h('div', { style: { display: 'flex', gap: '6px' } }, quick('Today', 0), quick('7 days', 6), quick('30 days', 29)))));
+
+  const rows = LOG.data.rows;
+  const tbody = h('tbody');
+  for (const r of rows) {
+    const verb = r.action === 'CANCEL' ? 'Removed: ' : r.action === 'AMEND' ? 'Changed to: ' : '';
+    const what = `${r.type_name}${r.doctor_name ? ' · ' + r.doctor_name : ''}${r.clinic_id ? ' · Cl ' + r.clinic_id : ''}${r.notes && !/^Booking #\d+$/.test(r.notes) ? ' · "' + r.notes + '"' : ''}`;
+    const [d, t] = (r.recorded_at || '').split(' ');
+    tbody.appendChild(h('tr', null,
+      h('td', { style: { whiteSpace: 'nowrap' } }, d ? fmtDay(d) + ' ' + d.slice(0, 4) : '—', h('div', { class: 'note', style: { fontFamily: 'var(--mono)' } }, t || '')),
+      h('td', { style: { whiteSpace: 'nowrap' } }, fmtDay(r.work_date), ' · ', r.session_code),
+      h('td', { class: 'name' }, r.staff_name),
+      h('td', null, h('span', { style: { color: r.action === 'CANCEL' ? '#7A1E2C' : 'inherit' } }, verb + what)),
+      h('td', { class: 'note' }, String(r.recorded_by || '').replace(/\s*\(#\d+\)$/, '')),
+      h('td', { class: 'note', style: { fontFamily: 'var(--mono)' } }, '#' + r.log_id)));
+  }
+  app.appendChild(h('section', { class: 'card', style: { overflow: 'hidden' } },
+    h('div', { class: 'card-head' }, h('h2', null, `${rows.length} change${rows.length === 1 ? '' : 's'}`),
+      h('span', { class: 'note' }, `${fmtDay(LOG.from)} – ${fmtDay(LOG.to)}${rows.length >= 5000 ? ' · showing the latest 5000' : ''}`)),
+    rows.length ? h('div', { class: 'scroll-x' }, h('table', { class: 'grid', style: { minWidth: '860px', fontSize: '13px' } },
+      h('thead', null, h('tr', null, ['Recorded', 'Schedule day', 'Staff', 'Change', 'By', ''].map((x) => h('th', { scope: 'col' }, x)))), tbody))
+      : h('div', { class: 'loading' }, 'No changes recorded for these days.')));
 }
 
 // ---------------------------------------------------------------- page: compliance
@@ -1035,6 +1067,7 @@ async function render() {
   try {
     if (S.tab === 'assign') await renderAssign(frag);
     else if (S.tab === 'compliance') await renderCompliance(frag);
+    else if (S.tab === 'log') await renderLog(frag);
     else if (S.tab === 'appraisals') await renderAppraisals(frag);
     else if (S.tab === 'staff') await renderStaff(frag);
     else if (PAGES[S.tab]) await PAGES[S.tab](frag);
