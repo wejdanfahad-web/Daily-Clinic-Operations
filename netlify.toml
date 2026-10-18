@@ -14,6 +14,10 @@
 [functions."duties-cron"]
   schedule = "0 13 * * *"
 
+# 14:00 Riyadh (11:00 UTC): remind the CIC if the next two working days have no published schedule.
+[functions."publish-check"]
+  schedule = "0 11 * * *"
+
 # Nice API paths: /api/board → /.netlify/functions/board
 [[redirects]]
   from   = "/api/*"

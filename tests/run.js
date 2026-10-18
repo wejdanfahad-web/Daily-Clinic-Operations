@@ -534,6 +534,25 @@ function ev(method, { body, query, cookie } = {}) {
     push._setClock(null);
   });
 
+  await t('publish check: CIC told when the next working days have no schedule', async () => {
+    const push = require('../netlify/functions/lib/push');
+    push._setClock(() => new Date('2026-10-22T11:00:00Z')); // Thursday 14:00 Riyadh -> Sun 25 + Mon 26
+    const asked = [];
+    let cic = false;
+    responder = (sql, binds) => {
+      if (/v_assignments_current/.test(sql)) { const d = binds.d; asked.push(d); return rows([{ N: d === '2026-10-25' ? 4 : 0 }]); }
+      if (/app_role = 'ADMIN'/.test(sql)) { cic = true; return rows([{ STAFF_ID: 99 }]); }
+      if (/push_subscriptions/.test(sql)) return rows([]);
+      if (/COUNT/.test(sql)) return rows([{ N: 0 }]);
+      return /^\s*(BEGIN|DECLARE)/.test(sql) ? done() : rows([]);
+    };
+    const r = JSON.parse((await F('publish-check')({})).body);
+    assert.deepStrictEqual(asked, ['2026-10-25', '2026-10-26'], 'skips Friday and Saturday');
+    assert.deepStrictEqual(r.missing, ['2026-10-26']);
+    assert(cic, 'CIC notified');
+    push._setClock(null);
+  });
+
   await t('wrong HTTP method → 405', async () => {
     const r = await F('login')(ev('GET'));
     assert.strictEqual(r.statusCode, 405);
