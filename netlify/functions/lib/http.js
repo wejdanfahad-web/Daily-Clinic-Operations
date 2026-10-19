@@ -96,19 +96,15 @@ function requireRealCic(event) {
   return s;
 }
 
-// Staff assigned "In charge" on a day act as the CIC that day, 07:00–16:30 Riyadh.
-const ACTING_FROM = '07:00', ACTING_UNTIL = '16:30';
+// Staff assigned "In charge" act as the CIC from 15:00 the working day before until the end of
+// their in-charge session (see lib/acting.js).
 const actingCache = new Map();   // staff id -> { until, yes }
 async function actingCic(s) {
   if (!s || s.role === 'ADMIN' || s.mustChange) return false;
-  const t = riyadhTime();
-  if (t < ACTING_FROM || t >= ACTING_UNTIL) return false;
   const hit = actingCache.get(s.sid);
   if (hit && hit.until > Date.now()) return hit.yes;
-  const { one: dbOne } = require('./db');
-  const r = await dbOne(`SELECT COUNT(*) AS n FROM v_assignments_current
-                          WHERE staff_id = :sid AND type_code = 'IN_CHARGE' AND work_date = TO_DATE(:d, 'YYYY-MM-DD')`, { sid: s.sid, d: riyadhToday() });
-  const yes = !!(r && Number(r.n) > 0);
+  const { actingStaff } = require('./acting');
+  const yes = (await actingStaff(httpClock(), s.sid)).has(Number(s.sid));
   actingCache.set(s.sid, { until: Date.now() + 60e3, yes });
   return yes;
 }

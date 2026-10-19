@@ -553,19 +553,34 @@ function ev(method, { body, query, cookie } = {}) {
     push._setClock(null);
   });
 
-  await t('in charge today = acting CIC 07:00-16:30 (not logins or appraisals)', async () => {
+  await t('acting CIC: rule from 15:00 the working day before to the end of the in-charge session', async () => {
+    const { actingFrom } = require('../netlify/functions/lib/acting');
+    const am = [{ staff_id: 7, work_date: '2026-10-25', session_code: 'AM' }];   // Sunday AM
+    const at = (iso) => actingFrom(am, new Date(iso)).has(7);
+    assert.strictEqual(at('2026-10-22T11:59:00Z'), false, 'Thu 14:59');
+    assert.strictEqual(at('2026-10-22T12:00:00Z'), true, 'Thu 15:00 (working day before Sunday)');
+    assert.strictEqual(at('2026-10-24T09:00:00Z'), true, 'over the weekend');
+    assert.strictEqual(at('2026-10-25T09:59:00Z'), true, 'Sun 12:59');
+    assert.strictEqual(at('2026-10-25T10:00:00Z'), false, 'Sun 13:00: AM session over');
+    const pm = [{ staff_id: 7, work_date: '2026-10-25', session_code: 'PM' }];
+    assert.strictEqual(actingFrom(pm, new Date('2026-10-25T13:00:00Z')).has(7), true, 'PM: until 16:30');
+    assert.strictEqual(actingFrom(pm, new Date('2026-10-25T13:30:00Z')).has(7), false, 'PM over at 16:30');
+  });
+
+  await t('in charge = acting CIC (not logins or appraisals)', async () => {
     const http = require('../netlify/functions/lib/http');
     http._setHttpClock(() => new Date('2026-10-20T07:00:00Z')); // Tue 10:00 Riyadh
-    responder = (sql, binds) => /type_code = 'IN_CHARGE'/.test(sql) ? rows([{ N: 1 }]) : /v_assignment_history/.test(sql) ? rows([]) : rows([]);
+    const ic = (on) => (sql) => /type_code = 'IN_CHARGE'/.test(sql) ? rows(on ? [{ STAFF_ID: 5, WORK_DATE: '2026-10-20', SESSION_CODE: 'PM' }] : []) : rows([]);
+    responder = ic(true);
     let r = await F('history')(ev('GET', { cookie: staff, query: { from: '2026-10-20', to: '2026-10-20' } }));
     assert.strictEqual(r.statusCode, 200, 'acting CIC opens the log: ' + r.body);
     r = await F('staff-admin')(ev('GET', { cookie: staff }));
     assert.strictEqual(r.statusCode, 403, 'but not logins');
     http._setHttpClock(() => new Date('2026-10-20T14:00:00Z')); // 17:00 Riyadh
     r = await F('history')(ev('GET', { cookie: staff, query: { from: '2026-10-20', to: '2026-10-20' } }));
-    assert.strictEqual(r.statusCode, 403, 'ends at 16:30');
+    assert.strictEqual(r.statusCode, 403, 'ends with the session');
     http._setHttpClock(() => new Date('2026-10-20T07:00:00Z'));
-    responder = (sql) => /type_code = 'IN_CHARGE'/.test(sql) ? rows([{ N: 0 }]) : rows([]);
+    responder = ic(false);
     r = await F('history')(ev('GET', { cookie: staff, query: { from: '2026-10-20', to: '2026-10-20' } }));
     assert.strictEqual(r.statusCode, 403, 'not in charge -> staff');
     http._setHttpClock(null);
