@@ -5,7 +5,7 @@
 // GET  /api/appraisals[?year=2026] CIC: everyone · staff: only their own row
 // POST /api/appraisals { staff_id, year, step_no, done: true }   CIC
 const { query, exec } = require('./lib/db');
-const { handler, json, parseBody, HttpError, requireUser, requireCic, riyadhToday } = require('./lib/http');
+const { handler, json, parseBody, HttpError, requireUser, requireRealCic, riyadhToday } = require('./lib/http');
 
 // Appraisal cycle year for a Riyadh date: a new cycle starts on 30 January.
 function cycleYear(today) {
@@ -38,7 +38,7 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
     const current = cycleYear(riyadhToday());
     await ensureCycle(current);
     const year = Number((event.queryStringParameters || {}).year) || current;
-    const own = user.role !== 'ADMIN';
+    const own = user.role !== 'ADMIN' || !!user.acting;   // the acting CIC sees only her own row
     const years = (await query(`SELECT DISTINCT appraisal_year AS y FROM appraisal_steps ORDER BY 1 DESC`)).map((r) => Number(r.y));
     const [steps, rows] = await Promise.all([
       query(`SELECT step_no, step_name, TO_CHAR(due_date, 'YYYY-MM-DD') AS due_date FROM appraisal_steps WHERE appraisal_year = :y ORDER BY step_no`, { y: year }),
@@ -51,7 +51,7 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
     return json(200, { year, current_year: current, years, steps, rows });
   }
 
-  const user = requireCic(event);
+  const user = requireRealCic(event);
   const { staff_id, year, step_no, done } = parseBody(event);
   const sid = Number(staff_id), y = Number(year), step = Number(step_no);
   if (!sid || !y || !step) throw new HttpError(400, 'staff_id, year and step_no are required.');

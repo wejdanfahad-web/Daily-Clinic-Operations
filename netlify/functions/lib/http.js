@@ -70,6 +70,7 @@ function sessionCookie(token) {
 const clearCookie = () => `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
 
 function readSession(event) {
+  if (event && event._acting) return event._acting;     // in charge today: acting CIC for this request
   const header = (event.headers && (event.headers.cookie || event.headers.Cookie)) || '';
   const m = new RegExp('(?:^|;\\s*)' + COOKIE + '=([^;]+)').exec(header);
   return m ? verifySession(m[1]) : null;
@@ -88,6 +89,29 @@ function requireCic(event) {
   if (s.role !== 'ADMIN') throw new HttpError(403, 'Only the CIC can do this.');
   return s;
 }
+// The CIC herself only (logins, passwords, appraisals): never the acting CIC.
+function requireRealCic(event) {
+  const s = requireCic(event);
+  if (s.acting) throw new HttpError(403, 'Only the CIC can do this.');
+  return s;
+}
+
+// Staff assigned "In charge" on a day act as the CIC that day, 07:00–16:30 Riyadh.
+const ACTING_FROM = '07:00', ACTING_UNTIL = '16:30';
+const actingCache = new Map();   // staff id -> { until, yes }
+async function actingCic(s) {
+  if (!s || s.role === 'ADMIN' || s.mustChange) return false;
+  const t = riyadhTime();
+  if (t < ACTING_FROM || t >= ACTING_UNTIL) return false;
+  const hit = actingCache.get(s.sid);
+  if (hit && hit.until > Date.now()) return hit.yes;
+  const { one: dbOne } = require('./db');
+  const r = await dbOne(`SELECT COUNT(*) AS n FROM v_assignments_current
+                          WHERE staff_id = :sid AND type_code = 'IN_CHARGE' AND work_date = TO_DATE(:d, 'YYYY-MM-DD')`, { sid: s.sid, d: riyadhToday() });
+  const yes = !!(r && Number(r.n) > 0);
+  actingCache.set(s.sid, { until: Date.now() + 60e3, yes });
+  return yes;
+}
 
 // CIC always; otherwise the staff member who is "In charge" right now (derived live from the log).
 async function requireCicOrInCharge(event) {
@@ -100,12 +124,13 @@ async function requireCicOrInCharge(event) {
 
 // Riyadh calendar date as YYYY-MM-DD.
 function riyadhToday(offsetDays = 0) {
-  const d = new Date(Date.now() + offsetDays * 86400e3);
+  const d = new Date(httpClock().getTime() + offsetDays * 86400e3);
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 }
 
 // Riyadh wall-clock time "HH:MM"
-function riyadhTime(now = new Date()) {
+let httpClock = () => new Date();   // replaceable in tests
+function riyadhTime(now = httpClock()) {
   return new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Riyadh', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(now);
 }
 // A day's schedule and duties are shown to staff (and the public) only from 07:30 Riyadh on that day.
@@ -125,6 +150,10 @@ function handler(methods, fn) {
   return async (event, context) => {
     if (!methods.includes(event.httpMethod)) return json(405, { error: 'Method not allowed.' }, { Allow: methods.join(', ') });
     try {
+      const s = readSession(event);
+      if (s && s.role !== 'ADMIN' && await actingCic(s).catch(() => false)) {
+        event._acting = { ...s, role: 'ADMIN', acting: true, name: `${s.name} (acting CIC)` };
+      }
       return await fn(event, context);
     } catch (err) {
       if (err instanceof HttpError) return json(err.status, { error: err.message });
@@ -138,5 +167,5 @@ function handler(methods, fn) {
 module.exports = {
   json, cachedJson, parseBody, HttpError, handler,
   signSession, verifySession, sessionCookie, clearCookie, readSession,
-  requireUser, requireCic, requireCicOrInCharge, riyadhToday, riyadhTime, releasedToStaff, STAFF_RELEASE, isIsoDate,
+  requireUser, requireCic, requireRealCic, requireCicOrInCharge, actingCic, _clearActing: () => actingCache.clear(), _setHttpClock: (fn) => { httpClock = fn || (() => new Date()); actingCache.clear(); }, riyadhToday, riyadhTime, releasedToStaff, STAFF_RELEASE, isIsoDate,
 };

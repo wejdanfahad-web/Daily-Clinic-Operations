@@ -99,12 +99,12 @@ const TABS = [
   { id: 'inventory', label: 'Clinic inventory', who: 'staff' },
   { id: 'compliance', label: 'Daily checklists Compliance', who: 'staff' },
   { id: 'appraisals', label: 'Annual Appraisal', who: 'staff' },
-  { id: 'staff', label: 'Staff & logins', who: 'cic' },
+  { id: 'staff', label: 'Staff & logins', who: 'realcic' },
   { id: 'log', label: 'Assignment log', who: 'cic' },
 ];
 // Extra pages register themselves here (see pages.js).
 const PAGES = {};
-const tabAllowed = (t) => t.who === 'public' || (t.who === 'staff' && isStaff()) || (t.who === 'cic' && isCic());
+const tabAllowed = (t) => t.who === 'public' || (t.who === 'staff' && isStaff()) || (t.who === 'cic' && isCic()) || (t.who === 'realcic' && isCic() && !S.me.acting);
 
 // ---------------------------------------------------------------- reference helpers
 const refMaps = () => {
@@ -145,6 +145,7 @@ function renderHeader() {
   }
   $('todayLabel').textContent = fmtLong(TODAY());
   $('roleLabel').textContent = !S.me ? 'Public view · read only'
+    : S.me.acting ? `${S.me.name} · in charge today`
     : S.me.role === 'ADMIN' ? `${S.me.name} · CIC`
     : `${S.me.name} · Staff${S.me.inCharge ? ' · in charge (' + S.me.inChargeSession + ')' : ''}`;
   $('authBtn').textContent = S.me ? 'Sign out' : 'Staff sign in';

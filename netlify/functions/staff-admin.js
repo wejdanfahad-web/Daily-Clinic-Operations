@@ -5,7 +5,7 @@
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { query, one, exec } = require('./lib/db');
-const { handler, json, parseBody, HttpError, requireCic } = require('./lib/http');
+const { handler, json, parseBody, HttpError, requireRealCic } = require('./lib/http');
 
 function tempPassword() {
   const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz';
@@ -17,7 +17,7 @@ function tempPassword() {
 }
 
 exports.handler = handler(['GET', 'POST'], async (event) => {
-  requireCic(event);
+  requireRealCic(event);
   if (event.httpMethod === 'GET') {
     const rows = await query(`
       SELECT staff_id, display_name, employee_no, staff_type, home_clinic_id, employment_status, app_role,

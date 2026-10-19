@@ -540,7 +540,7 @@ function ev(method, { body, query, cookie } = {}) {
     const asked = [];
     let cic = false;
     responder = (sql, binds) => {
-      if (/v_assignments_current/.test(sql)) { const d = binds.d; asked.push(d); return rows([{ N: d === '2026-10-25' ? 4 : 0 }]); }
+      if (/type_code NOT IN/.test(sql)) { const d = binds.d; asked.push(d); return rows([{ N: d === '2026-10-25' ? 4 : 0 }]); }
       if (/app_role = 'ADMIN'/.test(sql)) { cic = true; return rows([{ STAFF_ID: 99 }]); }
       if (/push_subscriptions/.test(sql)) return rows([]);
       if (/COUNT/.test(sql)) return rows([{ N: 0 }]);
@@ -551,6 +551,24 @@ function ev(method, { body, query, cookie } = {}) {
     assert.deepStrictEqual(r.missing, ['2026-10-26']);
     assert(cic, 'CIC notified');
     push._setClock(null);
+  });
+
+  await t('in charge today = acting CIC 07:00-16:30 (not logins or appraisals)', async () => {
+    const http = require('../netlify/functions/lib/http');
+    http._setHttpClock(() => new Date('2026-10-20T07:00:00Z')); // Tue 10:00 Riyadh
+    responder = (sql, binds) => /type_code = 'IN_CHARGE'/.test(sql) ? rows([{ N: 1 }]) : /v_assignment_history/.test(sql) ? rows([]) : rows([]);
+    let r = await F('history')(ev('GET', { cookie: staff, query: { from: '2026-10-20', to: '2026-10-20' } }));
+    assert.strictEqual(r.statusCode, 200, 'acting CIC opens the log: ' + r.body);
+    r = await F('staff-admin')(ev('GET', { cookie: staff }));
+    assert.strictEqual(r.statusCode, 403, 'but not logins');
+    http._setHttpClock(() => new Date('2026-10-20T14:00:00Z')); // 17:00 Riyadh
+    r = await F('history')(ev('GET', { cookie: staff, query: { from: '2026-10-20', to: '2026-10-20' } }));
+    assert.strictEqual(r.statusCode, 403, 'ends at 16:30');
+    http._setHttpClock(() => new Date('2026-10-20T07:00:00Z'));
+    responder = (sql) => /type_code = 'IN_CHARGE'/.test(sql) ? rows([{ N: 0 }]) : rows([]);
+    r = await F('history')(ev('GET', { cookie: staff, query: { from: '2026-10-20', to: '2026-10-20' } }));
+    assert.strictEqual(r.statusCode, 403, 'not in charge -> staff');
+    http._setHttpClock(null);
   });
 
   await t('wrong HTTP method → 405', async () => {

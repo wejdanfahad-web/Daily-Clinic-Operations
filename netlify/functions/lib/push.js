@@ -120,7 +120,12 @@ async function flushPending() {
 }
 
 async function notifyCic(message) {
-  const cics = await query(`SELECT staff_id FROM staff WHERE app_role = 'ADMIN' AND employment_status = 'ACTIVE'`);
+  // the CIC, plus whoever is In charge today while acting as CIC (07:00-16:30)
+  const t = riyadhClock(clock());
+  const acting = t >= '07:00' && t < '16:30';
+  const cics = await query(`SELECT staff_id FROM staff WHERE app_role = 'ADMIN' AND employment_status = 'ACTIVE'
+    UNION SELECT staff_id FROM v_assignments_current
+     WHERE :acting = 'Y' AND type_code = 'IN_CHARGE' AND work_date = TO_DATE(:d, 'YYYY-MM-DD')`, { acting: acting ? 'Y' : 'N', d: riyadhStamp().slice(0, 10) });
   const out = [];
   for (const c of cics) out.push(await notifyStaff(c.staff_id, { ...message, dedupeKey: message.dedupeKey ? `${message.dedupeKey}:ST${c.staff_id}` : undefined }));
   return out;
