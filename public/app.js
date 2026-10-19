@@ -215,7 +215,39 @@ function changePasswordDialog() {
 async function loadMe() {
   try { S.me = (await api('me')).user; } catch { S.me = null; }
   if (S.me && S.me.mustChange) changePasswordDialog();
-  if (S.me && !S.me.mustChange) claimDevice();
+  if (S.me && !S.me.mustChange) { claimDevice(); nudgeNotifications(); }
+}
+// Phones only: until alerts are on for this phone, ask every time the app opens or someone signs in.
+let NUDGED = false;
+async function nudgeNotifications() {
+  if (NUDGED) return;
+  const phone = /iPhone|iPad|iPod|Android/.test(navigator.userAgent);
+  if (!phone) return;
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  const canPush = 'serviceWorker' in navigator && 'PushManager' in window && typeof Notification !== 'undefined';
+  let text, action = null;
+  if (!canPush) {
+    if (!ios || standalone) return;              // a browser that can't receive alerts at all: nothing to ask
+    text = 'To get your alerts on iPhone: tap Share, then "Add to Home Screen". Open ENDO Ops from your home screen and turn notifications on.';
+  } else if (Notification.permission === 'denied') {
+    text = ios ? 'Notifications are blocked for ENDO Ops. Open iPhone Settings → Notifications → ENDO Ops and turn on Allow Notifications.'
+      : 'Notifications are blocked for this site. Tap the lock icon next to the address (or Chrome ⋮ → Settings → Site settings → Notifications) and allow them, then reopen the app.';
+  } else if (Notification.permission === 'granted' && await currentSub()) {
+    return;                                        // all set
+  } else {
+    text = 'Get your assignments, duties, surgeries and PPM reminders on this phone. Alerts come only between 7:30 AM and 4:30 PM.';
+    action = 'Turn on notifications';
+  }
+  NUDGED = true;
+  setTimeout(() => {
+    if ($('dlg').open) return;                     // don't cover another dialog (e.g. new password)
+    openDialog((body, close) => {
+      body.append(h('h3', null, 'Turn on phone notifications'), h('p', { class: 'note', style: { fontSize: '14px', lineHeight: 1.5 } }, text),
+        h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn', onclick: close }, action ? 'Not now' : 'OK'),
+          action ? h('button', { type: 'button', class: 'btn primary', onclick: async () => { close(); await enablePush(); } }, action) : null));
+    });
+  }, 600);
 }
 // Alerts belong to the person signed in on this phone: claim the phone on sign-in, release it on sign-out.
 async function currentSub() {
