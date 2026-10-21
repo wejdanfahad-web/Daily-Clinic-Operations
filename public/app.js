@@ -444,9 +444,9 @@ async function renderAssign(app) {
   side.appendChild(await dutiesCard(date));
   if (isStaff()) side.appendChild(notifyCard());
   side.appendChild(bookSurgeryCard());
-  if (isCic()) {
-    side.appendChild(await upcomingSurgeriesCard());
-  }
+  if (isCic()) side.appendChild(await upcomingSurgeriesCard());
+  side.appendChild(bookN2OCard());
+  if (isCic()) side.appendChild(await upcomingN2OCard());
 }
 
 // ---------- CIC cell editor
@@ -611,7 +611,7 @@ function editCell(m, sess) {
 }
 
 async function refreshBoard() {
-  S.board = null; S.history = null; S.boardsCache = {}; LOG.data = null;
+  S.board = null; S.history = null; S.boardsCache = {}; LOG.data = null; S.n2o = null;
   render();
 }
 
@@ -819,6 +819,78 @@ function bookSurgeryCard() {
     h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Date', date), h('div', { class: 'f', role: 'group', 'aria-label': 'Session', style: { display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px', color: '#4F5D5A' } }, 'Session', h('div', { class: 'seg' }, segBtns))),
     h('label', { class: 'f' }, 'Note (optional, no patient details)', note), honey,
     slots, err, send, ok);
+}
+
+// ---------- book Clinic 11 for nitrous oxide (public, for doctors)
+function bookN2OCard() {
+  const residents = S.ref.doctors.filter((d) => /^(PG|BD)/.test(d.category_code || ''));
+  const op = h('select', { class: 'in', 'aria-label': '1st operator' }, h('option', { value: '' }, 'Choose…'), residents.map((d) => h('option', { value: d.doctor_id }, `${d.display_name} · ${d.category_code}`)));
+  const pedo = h('input', { class: 'in', maxlength: 80, placeholder: 'Name of the PEDO resident', 'aria-label': 'Assisting dentist (PEDO resident)' });
+  const sup = h('select', { class: 'in', 'aria-label': 'Supervisor' }, h('option', { value: '' }, 'Choose…'), S.ref.doctors.filter((d) => d.category_code === 'FC').map((d) => h('option', { value: d.doctor_id }, d.display_name)));
+  const date = h('input', { class: 'in', type: 'date', min: TODAY(), 'aria-label': 'Date' });
+  const note = h('input', { class: 'in', maxlength: 120, placeholder: 'Optional, no patient details' });
+  const honey = h('input', { type: 'text', name: 'website', tabindex: '-1', autocomplete: 'off', class: 'sr-only', 'aria-hidden': 'true' });
+  let sess = 'AM';
+  const segBtns = ['AM', 'PM'].map((k) => h('button', { type: 'button', 'aria-pressed': k === sess ? 'true' : 'false', onclick: () => { sess = k; segBtns.forEach((b) => b.setAttribute('aria-pressed', b.textContent === k ? 'true' : 'false')); } }, k));
+  const slots = h('div', { class: 'note' }, 'One booking per session');
+  const err = h('div', { class: 'msg bad', hidden: true, role: 'alert' });
+  const ok = h('div', { class: 'msg ok', hidden: true, role: 'status' });
+  date.addEventListener('change', async () => {
+    if (!date.value) return;
+    if (isWeekend(date.value)) { slots.textContent = 'Clinics are closed on Friday and Saturday.'; return; }
+    try {
+      const r = await api('n2o-bookings?date=' + date.value);
+      slots.textContent = `${fmtDay(date.value)}: AM ${r.AM ? 'booked' : 'free'} · PM ${r.PM ? 'booked' : 'free'}`;
+    } catch { /* keep default text */ }
+  });
+  const send = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
+    err.hidden = true; ok.hidden = true;
+    if (!op.value) { err.textContent = 'Choose the 1st operator.'; err.hidden = false; return; }
+    if (pedo.value.trim().length < 2) { err.textContent = 'Type the name of the PEDO resident.'; err.hidden = false; pedo.focus(); return; }
+    if (!sup.value) { err.textContent = 'Choose the supervisor.'; err.hidden = false; return; }
+    if (!date.value) { err.textContent = 'Pick the date.'; err.hidden = false; return; }
+    send.disabled = true;
+    try {
+      const r = await api('n2o-bookings', { method: 'POST', body: { doctor_id: Number(op.value), pedo_resident: pedo.value, supervisor_doctor_id: Number(sup.value), work_date: date.value, session: sess, note: note.value, website: honey.value } });
+      ok.textContent = r.message; ok.hidden = false;
+      note.value = ''; pedo.value = ''; date.dispatchEvent(new Event('change'));
+      if (isCic()) { S.n2o = null; render(); }
+    } catch (e) { err.textContent = e.message; err.hidden = false; }
+    send.disabled = false;
+  } }, 'Submit booking');
+  return h('section', { class: 'card pad', 'aria-label': 'Book clinic 11 for Nitrous Oxide Gas' },
+    h('div', { class: 'row-between' }, h('h2', null, 'Book clinic 11 for Nitrous Oxide Gas'), h('span', { class: 'pill surg' }, 'FOR DOCTORS')),
+    h('label', { class: 'f' }, '1st operator (resident / postgraduate)', op),
+    h('label', { class: 'f' }, 'Assisting dentist (PEDO resident)', pedo),
+    h('label', { class: 'f' }, 'Supervisor (faculty)', sup),
+    h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Date', date), h('div', { class: 'f', role: 'group', 'aria-label': 'Session', style: { display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px', color: '#4F5D5A' } }, 'Session', h('div', { class: 'seg' }, segBtns))),
+    h('label', { class: 'f' }, 'Note', note), honey,
+    slots, err, send, ok);
+}
+
+// ---------- upcoming Clinic 11 nitrous oxide bookings (CIC)
+async function upcomingN2OCard() {
+  const card = h('section', { class: 'card pad', 'aria-label': 'Clinic 11 nitrous oxide bookings' });
+  try { if (!S.n2o) S.n2o = (await api('n2o-bookings?list=upcoming&t=' + Date.now())).bookings; }
+  catch (e) { card.append(h('h2', null, 'Clinic 11 · nitrous oxide'), h('div', { class: 'msg bad' }, e.message)); return card; }
+  const fresh = S.n2o.filter((b) => b.status === 'NEW').length;
+  card.appendChild(h('div', { class: 'row-between' }, h('h2', null, 'Clinic 11 · nitrous oxide'), fresh ? h('span', { class: 'pill red' }, `${fresh} new`) : null));
+  if (!S.n2o.length) { card.appendChild(h('div', { class: 'note' }, 'No upcoming bookings. You get a notification for each new one.')); return card; }
+  const act = async (b, action) => { try { await api('n2o-bookings', { method: 'POST', body: { booking_id: b.booking_id, action } }); S.n2o = null; render(); } catch (e) { toast(e.message); } };
+  const ul = h('ul', { class: 'plain', style: { gap: '8px' } });
+  for (const b of S.n2o) {
+    ul.appendChild(h('li', { class: 'booking' + (b.status === 'NEW' ? ' new' : '') },
+      h('div', { class: 'row-between' }, h('b', null, `${fmtDay(b.work_date)} · ${b.session_code}`), h('span', { class: 'status ' + (b.status === 'NEW' ? 'new' : '') }, b.status === 'NEW' ? 'New' : 'Seen')),
+      h('div', { class: 'who2' }, h('span', { class: 'catchip', style: catStyle(b.doctor_category) }, catLabel(b.doctor_category)), b.doctor_name,
+        h('span', { class: 'note' }, '· with PEDO'), h('b', null, b.pedo_resident)),
+      h('div', { class: 'note' }, 'Supervisor: ', h('b', { style: { color: '#17262B' } }, b.supervisor_name)),
+      b.note ? h('div', { class: 'note' }, b.note) : null,
+      h('div', { style: { display: 'flex', gap: '6px' } },
+        b.status === 'NEW' ? h('button', { type: 'button', class: 'btn small', onclick: () => act(b, 'seen') }, 'Mark seen') : null,
+        h('button', { type: 'button', class: 'btn small', onclick: () => confirm(`Cancel the Clinic 11 booking of ${b.doctor_name} on ${fmtDay(b.work_date)} ${b.session_code}?`) && act(b, 'cancel') }, 'Cancel booking'))));
+  }
+  card.appendChild(ul);
+  return card;
 }
 
 // ---------- upcoming surgeries (CIC)

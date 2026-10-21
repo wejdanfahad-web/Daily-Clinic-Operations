@@ -586,6 +586,21 @@ function ev(method, { body, query, cookie } = {}) {
     http._setHttpClock(null);
   });
 
+  await t('N2O booking: PEDO resident required, one per session, CIC notified', async () => {
+    let cic = false, inserted = null;
+    responder = (sql, binds) => /user_tab|user_tables|user_indexes|MICROSCOPE|BIB HOLDER|EPT/.test(sql) ? rows([{ N: 1 }])
+      : /INSERT INTO n2o_bookings/.test(sql) ? ((inserted = binds), done()) : /app_role = 'ADMIN'/.test(sql) ? ((cic = true), rows([{ STAFF_ID: 99 }]))
+      : /display_name FROM doctors/.test(sql) ? rows([{ DOCTOR_ID: 3, DISPLAY_NAME: 'Dr. Reema' }, { DOCTOR_ID: 9, DISPLAY_NAME: 'Dr. Maha' }]) : rows([]);
+    let r = await F('n2o-bookings')(ev('POST', { body: { doctor_id: 3, pedo_resident: ' ', supervisor_doctor_id: 9, work_date: '2030-01-06', session: 'AM' } }));
+    assert.strictEqual(r.statusCode, 400);
+    r = await F('n2o-bookings')(ev('POST', { body: { doctor_id: 3, pedo_resident: 'Dr. Lama', supervisor_doctor_id: 9, work_date: '2030-01-06', session: 'AM' } }));
+    assert.strictEqual(r.statusCode, 200, r.body);
+    assert.strictEqual(inserted.pedo, 'Dr. Lama');
+    assert(cic, 'CIC notified');
+    r = await F('n2o-bookings')(ev('GET', { query: { list: 'upcoming' } }));
+    assert.strictEqual(r.statusCode, 401, 'list is CIC only');
+  });
+
   await t('wrong HTTP method → 405', async () => {
     const r = await F('login')(ev('GET'));
     assert.strictEqual(r.statusCode, 405);

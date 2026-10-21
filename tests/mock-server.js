@@ -35,6 +35,7 @@ const D = Object.fromEntries(doctors.map((d) => [d.doctor_id, d]));
 const ST = Object.fromEntries(staff.map((s) => [s.staff_id, s]));
 
 let logSeq = 100, grpSeq = 100;
+const n2o = [];
 const logs = []; // all rows incl. cancelled
 function addRow(r, by = 'seed') {
   const row = { log_id: ++logSeq, action: r.action || 'ASSIGN', supersedes_log_id: r.supersedes_log_id || null, work_date: r.work_date, session_code: r.session, staff_id: r.staff_id,
@@ -240,6 +241,15 @@ function apiHandler(req, res, url, body) {
       }
       if (q.list) { if (!need('ADMIN')) return; return send(res, 200, { bookings: bookings.filter((b) => b.status !== 'CANCELLED') }); }
       { const bs = bookings.filter((b) => b.work_date === q.date && b.status !== 'CANCELLED'); return send(res, 200, { AM: bs.filter((b) => b.session_code === 'AM').length, PM: bs.filter((b) => b.session_code === 'PM').length, day: bs.length, limits: { per_session: 2, per_day: 3 } }); }
+    case 'n2o-bookings': {
+      if (req.method === 'GET' && q.list) { if (!need('ADMIN')) return; return send(res, 200, { bookings: n2o.filter((x) => x.status !== 'CANCELLED') }); }
+      if (req.method === 'GET') { const t = n2o.filter((x) => x.work_date === q.date && x.status !== 'CANCELLED'); return send(res, 200, { date: q.date, AM: t.some((x) => x.session_code === 'AM'), PM: t.some((x) => x.session_code === 'PM') }); }
+      if (body.action) { const x = n2o.find((y) => y.booking_id === body.booking_id); x.status = body.action === 'cancel' ? 'CANCELLED' : 'SEEN'; return send(res, 200, { ok: true }); }
+      if (!String(body.pedo_resident || '').trim()) return send(res, 400, { error: 'Type the name of the PEDO resident.' });
+      if (n2o.some((x) => x.work_date === body.work_date && x.session_code === body.session && x.status !== 'CANCELLED')) return send(res, 400, { error: 'Clinic 11 is already booked for nitrous oxide that session.' });
+      n2o.push({ booking_id: n2o.length + 1, work_date: body.work_date, session_code: body.session, status: 'NEW', pedo_resident: body.pedo_resident, note: body.note, doctor_name: D[body.doctor_id].display_name, doctor_category: D[body.doctor_id].category_code, supervisor_name: D[body.supervisor_doctor_id].display_name });
+      return send(res, 200, { ok: true, message: 'Booked. The CIC has been notified.' });
+    }
     case 'booking-action': {
       if (!need('ADMIN')) return;
       const b = bookings.find((x) => x.booking_id === body.booking_id);
