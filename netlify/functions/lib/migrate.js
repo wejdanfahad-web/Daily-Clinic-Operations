@@ -121,6 +121,32 @@ BEGIN
   COMMIT;
 END;`,
   },
+  {
+    id: '13_ppm_only_three',
+    optional: true,
+    done: `SELECT CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END AS n FROM equipment_catalog
+            WHERE item_kind = 'MACHINE' AND requires_ppm = 'Y' AND UPPER(item_name) NOT IN ('DENTAL CHAIR', 'X-RAY UNIT', 'MICROSCOPE')
+              AND list_status = 'STANDARD' AND NVL(updated_at, created_at) < TIMESTAMP '2026-10-21 00:00:00 +03:00'`,
+    run: `BEGIN
+  UPDATE equipment_catalog SET requires_ppm = 'N', updated_at = SYSTIMESTAMP
+   WHERE item_kind = 'MACHINE' AND requires_ppm = 'Y' AND UPPER(item_name) NOT IN ('DENTAL CHAIR', 'X-RAY UNIT', 'MICROSCOPE')
+     AND list_status = 'STANDARD' AND NVL(updated_at, created_at) < TIMESTAMP '2026-10-21 00:00:00 +03:00';
+  COMMIT;
+END;`,
+  },
+  {
+    id: '13_ppm_only_three_machines',
+    optional: true,
+    // Only the dental chair, X-ray unit and microscope have a PPM due date; anything else marked by mistake is cleared.
+    // Runs once (marked by the table comment), so a PPM the CIC later switches on stays on.
+    done: `SELECT COUNT(*) AS n FROM user_tab_comments WHERE table_name = 'EQUIPMENT_CATALOG' AND comments LIKE '%[ppm13]%'`,
+    run: `BEGIN
+  UPDATE equipment_catalog SET requires_ppm = 'N', updated_at = SYSTIMESTAMP
+   WHERE item_kind = 'MACHINE' AND requires_ppm = 'Y' AND UPPER(item_name) NOT IN ('DENTAL CHAIR', 'X-RAY UNIT', 'MICROSCOPE');
+  EXECUTE IMMEDIATE 'COMMENT ON TABLE equipment_catalog IS ''Standard list of machines and instruments [ppm13]''';
+  COMMIT;
+END;`,
+  },
 ];
 
 let ready = null;

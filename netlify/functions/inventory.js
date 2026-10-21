@@ -225,7 +225,7 @@ END;`, { js: JSON.stringify(rows), by });
       return { i: id, n: nm, q };
     });
     if (!(await canEditClinic(user, cid))) throw new HttpError(403, 'You can only update the inventory of your own clinic or the clinic you work in today.');
-    const resp = isCic ? null : user.sid;
+    const resp = isCic ? (Number(b.responsible_staff_id) || null) : user.sid;   // CIC: General, or a chosen staff member's list
     const existing = await query(`SELECT item_id FROM equipment_ppm WHERE clinic_id = :cid AND condition_status <> 'RETIRED'
                                      AND (responsible_staff_id = :r OR (responsible_staff_id IS NULL AND :r IS NULL))`, { cid, r: resp });
     const have = new Set(existing.map((r) => Number(r.item_id)));
@@ -276,6 +276,10 @@ END;`, { js: JSON.stringify(items), cid, resp, sid: user.sid, by, notes: clean(b
     const interval = b.ppm_interval_months ? Number(b.ppm_interval_months) : null;
     if (interval !== null && !(Number.isInteger(interval) && interval >= 1 && interval <= 120)) throw new HttpError(400, 'PPM interval must be 1–120 months.');
     if (!(await canEditClinic(user, cid))) throw new HttpError(403, 'You can only update the inventory of your own clinic or the clinic you work in today.');
+    if (!isCic && listId) {
+      const it = await one(`SELECT requires_ppm FROM equipment_catalog WHERE item_id = :id`, { id: listId });
+      if (it && it.requires_ppm === 'Y') throw new HttpError(403, 'The dental chair, X-ray unit and microscope are General machines kept by the CIC.');
+    }
 
     await exec(`
 DECLARE
@@ -309,10 +313,10 @@ BEGIN
           :sid, SYSTIMESTAMP, :resp, :by, :notes);
   COMMIT;
 END;`, {
-      kind, lid: listId, ser: serial, nm: name, ppm: b.requires_ppm === true || b.requires_ppm === 'Y' ? 'Y' : 'N', intv: kind === 'MACHINE' ? interval : null, cid, tag: kind === 'MACHINE' ? clean(b.asset_tag, 40) : null, qty,
+      kind, lid: listId, ser: serial, nm: name, ppm: isCic && (b.requires_ppm === true || b.requires_ppm === 'Y') ? 'Y' : 'N', intv: kind === 'MACHINE' ? interval : null, cid, tag: kind === 'MACHINE' ? clean(b.asset_tag, 40) : null, qty,
       lp: kind === 'MACHINE' ? optDate(b.last_ppm_date, 'Last PPM date') : null,
       due: kind === 'MACHINE' ? optDate(b.ppm_due_date, 'PPM due date') : null,
-      sid: user.sid, resp: isCic ? null : user.sid, by, notes: clean(b.notes, 400),
+      sid: user.sid, resp: isCic ? (Number(b.responsible_staff_id) || null) : user.sid, by, notes: clean(b.notes, 400),
     });
     return json(200, { ok: true });
   }

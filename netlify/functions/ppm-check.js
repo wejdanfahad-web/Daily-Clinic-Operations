@@ -37,22 +37,48 @@ exports.handler = async () => {
     });
     counts[res.status] = (counts[res.status] || 0) + 1;
   }
-  // Instruments with no quantity: tell the responsible staff member (first time, then each Sunday until fixed)
+  // Instruments with no quantity / machines with no Serial #: tell the responsible staff member
+  // (first time, then each Sunday until fixed)
   const noQty = await query(`
-    SELECT e.responsible_staff_id AS staff_id, e.clinic_id, COUNT(*) AS n, LISTAGG(e.equipment_id, ',') WITHIN GROUP (ORDER BY e.equipment_id) AS ids
+    SELECT e.responsible_staff_id AS staff_id, e.clinic_id,
+           SUM(CASE WHEN i.item_kind = 'INSTRUMENT' THEN 1 ELSE 0 END) AS n,
+           SUM(CASE WHEN i.item_kind = 'MACHINE' THEN 1 ELSE 0 END) AS m,
+           LISTAGG(e.equipment_id, ',') WITHIN GROUP (ORDER BY e.equipment_id) AS ids
       FROM equipment_ppm e JOIN equipment_catalog i ON i.item_id = e.item_id
-     WHERE i.item_kind = 'INSTRUMENT' AND NVL(e.quantity, 0) = 0 AND e.condition_status <> 'RETIRED' AND e.responsible_staff_id IS NOT NULL
+     WHERE e.condition_status <> 'RETIRED' AND e.responsible_staff_id IS NOT NULL
+       AND ((i.item_kind = 'INSTRUMENT' AND NVL(e.quantity, 0) = 0) OR (i.item_kind = 'MACHINE' AND TRIM(e.serial_no) IS NULL))
      GROUP BY e.responsible_staff_id, e.clinic_id`);
   for (const q of noQty) {
-    const n = Number(q.n);
+    const n = Number(q.n), m = Number(q.m);
+    const parts = [];
+    if (n) parts.push(`${n} instrument${n === 1 ? ' has' : 's have'} no quantity`);
+    if (m) parts.push(`${m} machine${m === 1 ? ' has' : 's have'} no Serial #`);
     const res = await notifyStaff(q.staff_id, {
       eventType: 'LOW_STOCK',
-      title: 'Add your instrument quantities',
-      body: `${n} instrument${n === 1 ? ' has' : 's have'} no quantity in Clinic ${q.clinic_id}. Open Clinic inventory and tap Update to add how many.`,
+      title: 'Complete your clinic inventory',
+      body: `Clinic ${q.clinic_id}: ${parts.join(' and ')}. Open Clinic inventory and tap Update to fill them in.`,
       url: `/#/inventory/${q.clinic_id}`,
       dedupeKey: `QTY_MISSING:ST${q.staff_id}:CL${q.clinic_id}:${String(q.ids).slice(0, 120)}${sunday ? ':WEEK:' + today : ''}`,
     });
     counts['QTY_' + res.status] = (counts['QTY_' + res.status] || 0) + 1;
+  }
+
+  // Machines with no Serial #: same reminder pattern
+  const noSerial = await query(`
+    SELECT e.responsible_staff_id AS staff_id, e.clinic_id, COUNT(*) AS n, LISTAGG(e.equipment_id, ',') WITHIN GROUP (ORDER BY e.equipment_id) AS ids
+      FROM equipment_ppm e JOIN equipment_catalog i ON i.item_id = e.item_id
+     WHERE i.item_kind = 'MACHINE' AND TRIM(e.serial_no) IS NULL AND e.condition_status <> 'RETIRED' AND e.responsible_staff_id IS NOT NULL
+     GROUP BY e.responsible_staff_id, e.clinic_id`);
+  for (const q of noSerial) {
+    const n = Number(q.n);
+    const res = await notifyStaff(q.staff_id, {
+      eventType: 'LOW_STOCK',
+      title: 'Add the Serial # of your machines',
+      body: `${n} machine${n === 1 ? ' has' : 's have'} no Serial # in Clinic ${q.clinic_id}. Open Clinic inventory and tap Update to add it.`,
+      url: `/#/inventory/${q.clinic_id}`,
+      dedupeKey: `SERIAL_MISSING:ST${q.staff_id}:CL${q.clinic_id}:${String(q.ids).slice(0, 120)}${sunday ? ':WEEK:' + today : ''}`,
+    });
+    counts['SERIAL_' + res.status] = (counts['SERIAL_' + res.status] || 0) + 1;
   }
 
   // CIC: one weekly summary (Sunday 07:30), not one message per machine

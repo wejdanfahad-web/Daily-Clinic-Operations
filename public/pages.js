@@ -997,35 +997,53 @@ PAGES.inventory = async function renderInventory(app) {
   // and Individual machines & instruments (each with the staff member responsible).
   const general = items.filter((it) => it.responsible_staff_id == null);
   const individual = items.filter((it) => it.responsible_staff_id != null);
+  // One table builder; columns follow what the list holds (serial for machines, quantity for instruments,
+  // PPM dates only when an item has a PPM).
   const itemTable = (list, canEdit, ppmOnly = false) => {
+    const hasM = list.some((it) => it.item_kind === 'MACHINE');
+    const hasI = list.some((it) => it.item_kind !== 'MACHINE');
+    const hasP = list.some((it) => it.requires_ppm === 'Y');
+    const cols = [hasM && hasI ? 'Type' : null, 'Item', hasM ? 'Serial #' : null, hasI ? 'Qty' : null, hasP ? 'Last PPM' : null, hasP ? 'PPM due' : null, 'Status', 'Last checked by', ''].filter((x) => x !== null);
     const tbody = h('tbody');
     for (const it of list) {
       const p = PPM_LABEL[it.ppm_status] || ['', ''];
-      tbody.appendChild(h('tr', { class: it.condition_status !== 'IN_SERVICE' ? 'unavail' : null },
-        h('td', null, h('span', { class: 'status' }, it.item_kind === 'MACHINE' ? 'Machine' : 'Instrument')),
-        h('td', { class: 'name' }, it.item_name, it.list_status === 'PENDING' ? h('span', { class: 'status new', style: { marginLeft: '6px' }, title: 'Typed under Other… — waiting for the CIC' }, 'new name') : null),
-        h('td', { style: { fontFamily: 'var(--mono)', fontSize: '12px' } }, it.item_kind === 'MACHINE' ? (it.serial_no || '—') : ''),
-        h('td', { class: 'score' }, it.item_kind === 'MACHINE' ? '' : Number(it.quantity) > 0 ? it.quantity : h('span', { class: 'status new' }, 'Quantity missing')),
-        h('td', null, it.requires_ppm !== 'Y' ? '' : it.last_ppm_date ? fmtDay(it.last_ppm_date) + ' ' + it.last_ppm_date.slice(0, 4) : '—'),
-        h('td', null, it.requires_ppm !== 'Y' ? '' : it.ppm_due_date ? fmtDay(it.ppm_due_date) + ' ' + it.ppm_due_date.slice(0, 4) : '—'),
-        h('td', null, p[0] ? h('span', { class: 'status ' + p[1] }, p[0]) : null, it.condition_status !== 'IN_SERVICE' ? h('span', { class: 'status new', style: { marginLeft: '4px' } }, it.condition_status.replace(/_/g, ' ').toLowerCase()) : null),
-        h('td', { class: 'note' }, it.last_verified_by_name ? `${it.last_verified_by_name} · ${it.last_verified_on || ''}` : '—'),
-        h('td', null, ppmOnly && it.requires_ppm === 'Y' ? h('button', { type: 'button', class: 'btn small', onclick: () => editItem(it, true) }, 'Update PPM') : canEdit ? h('div', { style: { display: 'flex', gap: '6px' } },
-          h('button', { type: 'button', class: 'btn small', onclick: () => editItem(it) }, 'Update'),
-          h('button', { type: 'button', class: 'btn small', title: 'Confirm this entry is still correct', onclick: async () => { try { await api('inventory', { method: 'POST', body: { action: 'verify', equipment_id: it.equipment_id } }); toast('Marked as checked.'); INV.data = null; render(); } catch (e) { toast(e.message); } } }, '✓ Still correct')) : null)));
+      const machine = it.item_kind === 'MACHINE';
+      const cells = [];
+      if (hasM && hasI) cells.push(h('td', null, h('span', { class: 'status' }, machine ? 'Machine' : 'Instrument')));
+      cells.push(h('td', { class: 'name' }, it.item_name, it.list_status === 'PENDING' ? h('span', { class: 'status new', style: { marginLeft: '6px' }, title: 'Typed under Other… — waiting for the CIC' }, 'new name') : null));
+      if (hasM) cells.push(h('td', { style: { fontFamily: 'var(--mono)', fontSize: '12px' } }, !machine ? '' : it.serial_no ? it.serial_no : h('span', { class: 'status new', style: { fontFamily: 'inherit' } }, 'Serial missing')));
+      if (hasI) cells.push(h('td', { class: 'score' }, machine ? '' : Number(it.quantity) > 0 ? it.quantity : h('span', { class: 'status new' }, 'Quantity missing')));
+      if (hasP) {
+        cells.push(h('td', null, it.requires_ppm !== 'Y' ? '' : it.last_ppm_date ? fmtDay(it.last_ppm_date) + ' ' + it.last_ppm_date.slice(0, 4) : '—'));
+        cells.push(h('td', null, it.requires_ppm !== 'Y' ? '' : it.ppm_due_date ? fmtDay(it.ppm_due_date) + ' ' + it.ppm_due_date.slice(0, 4) : '—'));
+      }
+      cells.push(h('td', null, p[0] ? h('span', { class: 'status ' + p[1] }, p[0]) : null, it.condition_status !== 'IN_SERVICE' ? h('span', { class: 'status new', style: { marginLeft: '4px' } }, it.condition_status.replace(/_/g, ' ').toLowerCase()) : null));
+      cells.push(h('td', { class: 'note' }, it.last_verified_by_name ? it.last_verified_by_name + (it.last_verified_on ? ' · ' + fmtDay(it.last_verified_on) : '') : '—'));
+      cells.push(h('td', null, ppmOnly && it.requires_ppm === 'Y' ? h('button', { type: 'button', class: 'btn small', onclick: () => editItem(it, true) }, 'Update PPM') : canEdit ? h('div', { style: { display: 'flex', gap: '6px' } },
+        h('button', { type: 'button', class: 'btn small', onclick: () => editItem(it) }, 'Update'),
+        h('button', { type: 'button', class: 'btn small', title: 'Confirm this entry is still correct', onclick: async () => { try { await api('inventory', { method: 'POST', body: { action: 'verify', equipment_id: it.equipment_id } }); toast('Marked as checked.'); INV.data = null; render(); } catch (e) { toast(e.message); } } }, '✓ Still correct')) : null));
+      tbody.appendChild(h('tr', { class: it.condition_status !== 'IN_SERVICE' ? 'unavail' : null }, cells));
     }
-    return h('div', { class: 'scroll-x' }, h('table', { class: 'grid', style: { minWidth: '980px', fontSize: '13px' } },
-      h('thead', null, h('tr', null, ['Type', 'Item', 'Serial #', 'Qty', 'Last PPM', 'PPM due', 'Status', 'Last checked by', ''].map((x) => h('th', { scope: 'col' }, x)))), tbody));
+    return h('div', { class: 'scroll-x' }, h('table', { class: 'grid', style: { minWidth: (cols.length * 105) + 'px', fontSize: '13px' } },
+      h('thead', null, h('tr', null, cols.map((x) => h('th', { scope: 'col' }, x)))), tbody));
   };
-  const count = (n) => `${n} item${n === 1 ? '' : 's'}`;
+  const count = (n, w = 'item') => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const canNote = editable ? 'you can update this clinic' : 'read only: you can update your own clinic or the clinic you work in today';
+  const missing = (list, test, word) => { const n = list.filter(test).length; return n ? ` · ${n} ${word}` : ''; };
   app.appendChild(h('section', { class: 'card', style: { overflow: 'hidden' }, 'aria-label': 'General machines' },
     h('div', { class: 'card-head' }, h('h2', null, `Clinic ${INV.clinic} · General machines`),
       h('span', { class: 'note' }, `${count(general.length)} · CIC records${isCic() ? '' : editable ? ' · you can update the PPM dates' : ' · read only'}`)),
     general.length ? itemTable(general, isCic(), !isCic() && editable) : h('div', { class: 'loading' }, 'No general machines recorded for this clinic yet.')));
+  const myMachines = individual.filter((it) => it.item_kind === 'MACHINE');
+  const myInstruments = individual.filter((it) => it.item_kind !== 'MACHINE');
   app.appendChild(h('section', { class: 'card', style: { overflow: 'hidden' }, 'aria-label': 'Individual machines' },
-    h('div', { class: 'card-head' }, h('h2', null, `Clinic ${INV.clinic} · Individual machines & instruments`),
-      h('span', { class: 'note' }, `${count(individual.length)} · ${editable ? 'you can update this clinic' : 'read only: you can update your own clinic or the clinic you work in today'}`)),
-    individual.length ? itemTable(individual, editable) : h('div', { class: 'loading' }, 'Nothing listed yet. The staff member of this clinic adds them below.')));
+    h('div', { class: 'card-head' }, h('h2', null, `Clinic ${INV.clinic} · Machines`),
+      h('span', { class: 'note' }, `${count(myMachines.length, 'machine')}${missing(myMachines, (it) => !it.serial_no, 'without Serial #')} · ${canNote}`)),
+    myMachines.length ? itemTable(myMachines, editable) : h('div', { class: 'loading' }, 'No machines listed yet. Add them below.')));
+  app.appendChild(h('section', { class: 'card', style: { overflow: 'hidden' }, 'aria-label': 'Individual instruments' },
+    h('div', { class: 'card-head' }, h('h2', null, `Clinic ${INV.clinic} · Instruments`),
+      h('span', { class: 'note' }, `${count(myInstruments.length, 'instrument')}${missing(myInstruments, (it) => !(Number(it.quantity) > 0), 'without quantity')} · ${canNote}`)),
+    myInstruments.length ? itemTable(myInstruments, editable) : h('div', { class: 'loading' }, 'No instruments listed yet. Add them below with their quantities.')));
 
   if (editable) app.appendChild(addItemCard(catalog));
   if (isCic()) app.appendChild(standardListCard(catalog, INV.data.pending || []));
@@ -1058,7 +1076,7 @@ function addItemCard(catalog) {
     const c = catalog.find((x) => String(x.item_id) === pick.value);
     return !!(c && c.requires_ppm === 'Y');
   };
-  const syncPpm = () => { otherPpmLabel.hidden = pick.value !== 'OTHER'; ppmBox.hidden = !needsPpm(); };
+  const syncPpm = () => { otherPpmLabel.hidden = pick.value !== 'OTHER' || !isCic(); ppmBox.hidden = !needsPpm(); };
   otherPpm.addEventListener('change', syncPpm);
   // Instruments: one row per item (dropdown + quantity), "+ Add more" for another row
   const numBox = () => {
@@ -1091,7 +1109,8 @@ function addItemCard(catalog) {
   const pickLabel = h('label', { class: 'f' }, 'Item', pick);
   const fillList = () => {
     pick.textContent = '';
-    const list = catalog.filter((c) => c.item_kind === kind);
+    // staff never add the General machines (dental chair, X-ray unit, microscope): the CIC keeps those
+    const list = catalog.filter((c) => c.item_kind === kind && (isCic() || c.requires_ppm !== 'Y'));
     pick.append(h('option', { value: '' }, list.length ? 'Choose…' : 'No list yet — choose Other…'),
       ...list.map((c) => h('option', { value: c.item_id }, c.item_name)), h('option', { value: 'OTHER' }, 'Other…'));
     otherLabel.hidden = true; other.value = ''; otherPpm.checked = false; syncPpm();
@@ -1154,7 +1173,7 @@ function addItemCard(catalog) {
 // CIC: the standard list behind the dropdown, plus names typed under "Other…" waiting for review
 let STD_LIST = null; // public/data/catalog.json (the department's list, loaded with one click)
 function standardListCard(catalog, pending) {
-  const card = h('details', { class: 'card pad', open: !!(pending && pending.length) },
+  const card = h('details', { class: 'card pad' },
     h('summary', { style: { cursor: 'pointer', fontWeight: 600, fontSize: '16px' } }, `Standard list (dropdown) · ${catalog.length} item${catalog.length === 1 ? '' : 's'}${pending && pending.length ? ` · ${pending.length} to review` : ''}`));
   const post = async (body, msg) => { try { await api('inventory', { method: 'POST', body }); if (msg) toast(msg); INV.data = null; render(); } catch (e) { toast(e.message); } };
 
@@ -1172,22 +1191,35 @@ function standardListCard(catalog, pending) {
     card.appendChild(box);
   }
 
-  for (const [k, label] of [['MACHINE', 'Machines'], ['INSTRUMENT', 'Instruments']]) {
-    const list = catalog.filter((c) => c.item_kind === k);
-    card.appendChild(h('div', null, h('b', { style: { fontSize: '13px' } }, `${label} (${list.length})`),
-      h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' } }, list.length ? list.map((c) => h('span', { class: 'chip', style: { background: '#F3F4F1', borderColor: '#DDE1DC' } },
-        c.item_name, k === 'MACHINE' ? h('button', { type: 'button', class: 'cat', title: c.requires_ppm === 'Y' ? 'Has a PPM due date (click to turn off)' : 'No PPM (click to turn on)',
-          'aria-label': `${c.item_name}: PPM ${c.requires_ppm === 'Y' ? 'on' : 'off'}`, style: { border: 0, cursor: 'pointer', opacity: c.requires_ppm === 'Y' ? 1 : 0.45 },
-          onclick: () => post({ action: 'catalog_ppm', item_id: c.item_id, requires_ppm: c.requires_ppm === 'Y' ? 'N' : 'Y' }) }, c.requires_ppm === 'Y' ? `PPM${c.ppm_interval_months ? ' ' + c.ppm_interval_months + 'm' : ''}` : 'no PPM') : null,
-        h('button', { type: 'button', 'aria-label': `Remove ${c.item_name} from the list`, style: { border: 0, background: 'transparent', cursor: 'pointer', fontWeight: 700 },
-          onclick: () => confirm(`Remove "${c.item_name}" from the dropdown? Items already in clinics keep their name.`) && post({ action: 'catalog_remove', item_id: c.item_id }) }, '×')))
-        : h('span', { class: 'note' }, 'Empty'))));
+  // Tidy list: plain names in columns; tap a name to change its PPM setting or remove it.
+  const itemDialog = (c) => openDialog((body, close) => {
+    const ppm = h('input', { type: 'checkbox', checked: c.requires_ppm === 'Y' });
+    body.append(h('h3', null, c.item_name), h('div', { class: 'note' }, c.item_kind === 'MACHINE' ? 'Machine' : 'Instrument'),
+      c.item_kind === 'MACHINE' ? h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center', fontSize: '14px', margin: '12px 0' } }, ppm,
+        'Has a PPM due date (General machine: kept by the CIC, staff update its PPM dates)') : null,
+      h('div', { class: 'actions' },
+        h('button', { type: 'button', class: 'btn danger', onclick: () => { if (confirm(`Remove "${c.item_name}" from the dropdown? Items already in clinics keep their name.`)) { close(); post({ action: 'catalog_remove', item_id: c.item_id }, 'Removed from the list.'); } } }, 'Remove from list'),
+        h('button', { type: 'button', class: 'btn', onclick: close }, 'Cancel'),
+        h('button', { type: 'button', class: 'btn dark', onclick: () => { close(); if (c.item_kind === 'MACHINE' && ppm.checked !== (c.requires_ppm === 'Y')) post({ action: 'catalog_ppm', item_id: c.item_id, requires_ppm: ppm.checked ? 'Y' : 'N' }, 'Saved.'); } }, 'Save')));
+  });
+  const groups = [
+    ['General machines (with PPM)', catalog.filter((c) => c.item_kind === 'MACHINE' && c.requires_ppm === 'Y')],
+    ['Machines', catalog.filter((c) => c.item_kind === 'MACHINE' && c.requires_ppm !== 'Y')],
+    ['Instruments', catalog.filter((c) => c.item_kind !== 'MACHINE')],
+  ];
+  card.appendChild(h('div', { class: 'note', style: { margin: '8px 0' } }, 'Tap a name to change it or remove it.'));
+  for (const [label, list] of groups) {
+    card.appendChild(h('div', { style: { marginTop: '10px' } }, h('b', { style: { fontSize: '13px' } }, `${label} (${list.length})`),
+      list.length ? h('ul', { style: { listStyle: 'none', margin: '6px 0 0', padding: 0, columns: '200px 4', columnGap: '16px', fontSize: '13px' } },
+        list.map((c) => h('li', { style: { breakInside: 'avoid' } }, h('button', { type: 'button', onclick: () => itemDialog(c),
+          style: { border: 0, background: 'transparent', padding: '4px 0', cursor: 'pointer', color: '#17262B', font: 'inherit', textAlign: 'left' } }, c.item_name))))
+        : h('div', { class: 'note' }, 'Empty')));
   }
 
   const nk = h('select', { class: 'in', style: { width: 'auto' } }, h('option', { value: 'MACHINE' }, 'Machine'), h('option', { value: 'INSTRUMENT' }, 'Instrument'));
   const nn = h('input', { class: 'in', maxlength: 120, placeholder: 'Item name, spelled exactly as it should appear' });
   const ni = h('select', { class: 'in', style: { width: 'auto' } }, h('option', { value: '' }, 'No PPM'), [3, 6, 12, 24].map((m) => h('option', { value: m }, `PPM every ${m} months`)));
-  card.appendChild(h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' } }, nk, h('div', { style: { flex: '1 1 260px' } }, nn), ni,
+  card.appendChild(h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #E6E9E4' } }, nk, h('div', { style: { flex: '1 1 260px' } }, nn), ni,
     h('button', { type: 'button', class: 'btn small dark', onclick: () => nn.value.trim() && post({ action: 'catalog_add', item_kind: nk.value, item_name: nn.value, requires_ppm: nk.value === 'MACHINE' && ni.value ? 'Y' : 'N', ppm_interval_months: nk.value === 'MACHINE' && ni.value ? Number(ni.value) : null }, 'Added to the list.') }, 'Add to list')));
 
   // one-click load of the department list shipped with the website
