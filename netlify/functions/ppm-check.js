@@ -63,24 +63,6 @@ exports.handler = async () => {
     counts['QTY_' + res.status] = (counts['QTY_' + res.status] || 0) + 1;
   }
 
-  // Machines with no Serial #: same reminder pattern
-  const noSerial = await query(`
-    SELECT e.responsible_staff_id AS staff_id, e.clinic_id, COUNT(*) AS n, LISTAGG(e.equipment_id, ',') WITHIN GROUP (ORDER BY e.equipment_id) AS ids
-      FROM equipment_ppm e JOIN equipment_catalog i ON i.item_id = e.item_id
-     WHERE i.item_kind = 'MACHINE' AND TRIM(e.serial_no) IS NULL AND e.condition_status <> 'RETIRED' AND e.responsible_staff_id IS NOT NULL
-     GROUP BY e.responsible_staff_id, e.clinic_id`);
-  for (const q of noSerial) {
-    const n = Number(q.n);
-    const res = await notifyStaff(q.staff_id, {
-      eventType: 'LOW_STOCK',
-      title: 'Add the Serial # of your machines',
-      body: `${n} machine${n === 1 ? ' has' : 's have'} no Serial # in Clinic ${q.clinic_id}. Open Clinic inventory and tap Update to add it.`,
-      url: `/#/inventory/${q.clinic_id}`,
-      dedupeKey: `SERIAL_MISSING:ST${q.staff_id}:CL${q.clinic_id}:${String(q.ids).slice(0, 120)}${sunday ? ':WEEK:' + today : ''}`,
-    });
-    counts['SERIAL_' + res.status] = (counts['SERIAL_' + res.status] || 0) + 1;
-  }
-
   // CIC: one weekly summary (Sunday 07:30), not one message per machine
   let summary = null;
   if (sunday) {

@@ -464,7 +464,7 @@ function ev(method, { body, query, cookie } = {}) {
 
   await t('inventory: general machines (CIC records) are read-only for staff; staff own what they add', async () => {
     responder = (sql) => /user_tab_columns|UPPER\(item_name\) = 'MICROSCOPE'/.test(sql) ? rows([{ N: 1 }])
-      : /responsible_staff_id FROM equipment_ppm/.test(sql) ? rows([{ CLINIC_ID: 9, ITEM_KIND: 'MACHINE', RESPONSIBLE_STAFF_ID: null }])
+      : /responsible_staff_id FROM equipment_ppm/.test(sql) ? rows([{ CLINIC_ID: 9, ITEM_KIND: 'MACHINE', REQUIRES_PPM: 'Y', RESPONSIBLE_STAFF_ID: null }])
       : /AS n FROM dual/.test(sql) ? rows([{ N: 1 }]) : done();
     let r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'update', equipment_id: 5, serial_no: 'NEW' } }));
     assert.strictEqual(r.statusCode, 403, 'staff cannot change a general machine');

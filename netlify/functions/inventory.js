@@ -20,8 +20,9 @@
 //   { action: "catalog_approve", item_id }           PENDING → STANDARD
 //   { action: "catalog_merge", item_id, into_item_id }   PENDING name was a variant of a list item
 // Every change to quantity / PPM dates / status is written to EQUIPMENT_HISTORY by trigger.
-// Two lists per clinic: GENERAL machines = the CIC's records (no responsible staff; read-only for staff),
-// INDIVIDUAL = machines/instruments a staff member is responsible for (Staff ID in the sheet, or whoever added it).
+// Lists per clinic: GENERAL machines = the items with a PPM due date (dental chair, X-ray unit, microscope;
+// staff update only their PPM dates); MACHINES and INSTRUMENTS = everything else, whoever added it.
+// Responsible staff = Staff ID in the sheet, whoever added it, or the clinic's own staff when the CIC adds.
 const { query, one, exec } = require('./lib/db');
 const { handler, json, parseBody, HttpError, requireUser, isIsoDate, riyadhToday } = require('./lib/http');
 const { ensureSchema } = require('./lib/migrate');
@@ -34,6 +35,12 @@ const optDate = (v, label) => {
   return v;
 };
 const clean = (v, max) => (v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim().slice(0, max));
+
+// The staff member whose home clinic this is (responsible for what the CIC adds there).
+async function clinicOwner(clinicId) {
+  const r = await one(`SELECT MIN(staff_id) AS sid FROM staff WHERE home_clinic_id = :cid AND employment_status = 'ACTIVE' AND app_role <> 'ADMIN'`, { cid: clinicId });
+  return r && r.sid ? Number(r.sid) : null;
+}
 
 async function canEditClinic(user, clinicId) {
   if (user.role === 'ADMIN') return true;
@@ -225,9 +232,8 @@ END;`, { js: JSON.stringify(rows), by });
       return { i: id, n: nm, q };
     });
     if (!(await canEditClinic(user, cid))) throw new HttpError(403, 'You can only update the inventory of your own clinic or the clinic you work in today.');
-    const resp = isCic ? (Number(b.responsible_staff_id) || null) : user.sid;   // CIC: General, or a chosen staff member's list
-    const existing = await query(`SELECT item_id FROM equipment_ppm WHERE clinic_id = :cid AND condition_status <> 'RETIRED'
-                                     AND (responsible_staff_id = :r OR (responsible_staff_id IS NULL AND :r IS NULL))`, { cid, r: resp });
+    const resp = isCic ? await clinicOwner(cid) : user.sid;   // CIC adding: the clinic's own staff member is responsible
+    const existing = await query(`SELECT item_id FROM equipment_ppm WHERE clinic_id = :cid AND condition_status <> 'RETIRED'`, { cid });
     const have = new Set(existing.map((r) => Number(r.item_id)));
     await exec(`
 DECLARE
@@ -247,9 +253,9 @@ BEGIN
     END IF;
     BEGIN
       SELECT equipment_id INTO l_eq FROM equipment_ppm
-       WHERE clinic_id = :cid AND item_id = l_item AND condition_status <> 'RETIRED'
-         AND (responsible_staff_id = :resp OR (responsible_staff_id IS NULL AND :resp IS NULL)) AND ROWNUM = 1;
-      UPDATE equipment_ppm SET quantity = r.q, last_verified_by = :sid, last_verified_at = SYSTIMESTAMP, updated_by = :by
+       WHERE clinic_id = :cid AND item_id = l_item AND condition_status <> 'RETIRED' AND ROWNUM = 1;
+      UPDATE equipment_ppm SET quantity = r.q, responsible_staff_id = NVL(responsible_staff_id, :resp),
+             last_verified_by = :sid, last_verified_at = SYSTIMESTAMP, updated_by = :by
        WHERE equipment_id = l_eq;
     EXCEPTION WHEN NO_DATA_FOUND THEN
       INSERT INTO equipment_ppm (clinic_id, item_id, quantity, last_verified_by, last_verified_at, responsible_staff_id, updated_by, notes)
@@ -316,19 +322,19 @@ END;`, {
       kind, lid: listId, ser: serial, nm: name, ppm: isCic && (b.requires_ppm === true || b.requires_ppm === 'Y') ? 'Y' : 'N', intv: kind === 'MACHINE' ? interval : null, cid, tag: kind === 'MACHINE' ? clean(b.asset_tag, 40) : null, qty,
       lp: kind === 'MACHINE' ? optDate(b.last_ppm_date, 'Last PPM date') : null,
       due: kind === 'MACHINE' ? optDate(b.ppm_due_date, 'PPM due date') : null,
-      sid: user.sid, resp: isCic ? (Number(b.responsible_staff_id) || null) : user.sid, by, notes: clean(b.notes, 400),
+      sid: user.sid, resp: isCic ? await clinicOwner(cid) : user.sid, by, notes: clean(b.notes, 400),
     });
     return json(200, { ok: true });
   }
 
   const id = Number(b.equipment_id);
   if (!id) throw new HttpError(400, 'equipment_id is required.');
-  const row = await one(`SELECT e.clinic_id, i.item_kind, e.responsible_staff_id FROM equipment_ppm e JOIN equipment_catalog i ON i.item_id = e.item_id WHERE e.equipment_id = :id`, { id });
+  const row = await one(`SELECT e.clinic_id, i.item_kind, i.requires_ppm, e.responsible_staff_id FROM equipment_ppm e JOIN equipment_catalog i ON i.item_id = e.item_id WHERE e.equipment_id = :id`, { id });
   if (!row) throw new HttpError(404, 'Item not found.');
   if (!(await canEditClinic(user, Number(row.clinic_id)))) throw new HttpError(403, 'You can only update the inventory of your own clinic or the clinic you work in today.');
-  // General machines (the CIC's records: master list and anything the CIC adds): staff of the clinic
-  // may only update the PPM dates; everything else stays with the CIC.
-  if (!isCic && row.responsible_staff_id == null) {
+  // General machines (dental chair, X-ray unit, microscope: the items with a PPM due date): staff of
+  // the clinic may only update the PPM dates; everything else about them stays with the CIC.
+  if (!isCic && row.item_kind === 'MACHINE' && row.requires_ppm === 'Y') {
     if (b.action !== 'update' || (b.last_ppm_date === undefined && b.ppm_due_date === undefined)) throw new HttpError(403, 'General machines are kept by the CIC. You can update their PPM dates.');
     for (const k of Object.keys(b)) if (!['action', 'equipment_id', 'last_ppm_date', 'ppm_due_date'].includes(k)) delete b[k];
   }

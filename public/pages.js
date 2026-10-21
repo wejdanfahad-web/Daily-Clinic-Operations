@@ -995,8 +995,9 @@ PAGES.inventory = async function renderInventory(app) {
 
   // Two lists per clinic: General machines (the CIC's records, read-only for staff)
   // and Individual machines & instruments (each with the staff member responsible).
-  const general = items.filter((it) => it.responsible_staff_id == null);
-  const individual = items.filter((it) => it.responsible_staff_id != null);
+  // General = the machines with a PPM due date; everything else is in the clinic's Machines / Instruments lists
+  const general = items.filter((it) => it.item_kind === 'MACHINE' && it.requires_ppm === 'Y');
+  const individual = items.filter((it) => !(it.item_kind === 'MACHINE' && it.requires_ppm === 'Y'));
   // One table builder; columns follow what the list holds (serial for machines, quantity for instruments,
   // PPM dates only when an item has a PPM).
   const itemTable = (list, canEdit, ppmOnly = false) => {
@@ -1045,6 +1046,10 @@ PAGES.inventory = async function renderInventory(app) {
       h('span', { class: 'note' }, `${count(myInstruments.length, 'instrument')}${missing(myInstruments, (it) => !(Number(it.quantity) > 0), 'without quantity')} · ${canNote}`)),
     myInstruments.length ? itemTable(myInstruments, editable) : h('div', { class: 'loading' }, 'No instruments listed yet. Add them below with their quantities.')));
 
+  if (INV.flash) {   // just saved: bring the list it went into on screen
+    const target = INV.flash; INV.flash = null;
+    setTimeout(() => { const el = document.querySelector(`section[aria-label="${target}"]`); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); el.style.boxShadow = '0 0 0 3px #9BD3C2'; setTimeout(() => { el.style.boxShadow = ''; }, 2500); } }, 50);
+  }
   if (editable) app.appendChild(addItemCard(catalog));
   if (isCic()) app.appendChild(standardListCard(catalog, INV.data.pending || []));
   if (isCic()) { const imp = importSheetCard(); if (!summary.some((x) => Number(x.items))) imp.open = true; app.appendChild(imp); }
@@ -1147,7 +1152,7 @@ function addItemCard(catalog) {
       save.disabled = true;
       try {
         const r = await api('inventory', { method: 'POST', body: { action: 'add_instruments', clinic_id: INV.clinic, items, notes: notes.value } });
-        toast(`Saved ${items.length} instrument${items.length === 1 ? '' : 's'}${r.updated ? ` (${r.updated} already listed: quantity updated)` : ''}.`); INV.data = null; render();
+        toast(`Saved ${items.length} instrument${items.length === 1 ? '' : 's'}${r.updated ? ` (${r.updated} already listed: quantity updated)` : ''}.`); INV.flash = 'Individual instruments'; INV.data = null; render();
       } catch (e) { show(e.message); save.disabled = false; }
       return;
     }
@@ -1161,17 +1166,16 @@ function addItemCard(catalog) {
         ? { action: 'add', clinic_id: INV.clinic, item_kind: kind, ...item, serial_no: serial.value, asset_tag: tag.value, notes: notes.value, requires_ppm: needsPpm() ? 'Y' : 'N',
             ...(needsPpm() ? { last_ppm_date: last.value || null, ppm_interval_months: interval.value || null, ppm_due_date: due.value || null } : {}) }
         : null });
-      toast(pick.value === 'OTHER' ? 'Added. The CIC will check the new name.' : 'Added.'); INV.data = null; render();
+      toast(pick.value === 'OTHER' ? 'Added. The CIC will check the new name.' : 'Added.'); INV.flash = 'Individual machines'; INV.data = null; render();
     } catch (e) { show(e.message); save.disabled = false; }
-  } }, isCic() ? `Add to Clinic ${INV.clinic} · General` : 'Add to Clinic ' + INV.clinic);
+  } }, 'Add to Clinic ' + INV.clinic);
   return h('section', { class: 'card pad', 'aria-label': 'Add an item' },
-    h('h2', null, 'Add an item'), isCic() ? h('div', { class: 'hint' }, 'Items you add as the CIC go to this clinic\'s General machines (your records). Staff add their own under Individual.') : null,
+    h('h2', null, 'Add an item'), h('div', { class: 'hint' }, 'Saved items appear straight away in this clinic\'s Machines or Instruments list above.'),
     h('div', { class: 'seg', role: 'group', 'aria-label': 'Item type', style: { maxWidth: '320px' } }, segBtns),
     pickLabel, otherLabel, machineOnly, instrumentOnly, h('label', { class: 'f' }, 'Notes', notes), err, h('div', null, save));
 }
 
 // CIC: the standard list behind the dropdown, plus names typed under "Other…" waiting for review
-let STD_LIST = null; // public/data/catalog.json (the department's list, loaded with one click)
 function standardListCard(catalog, pending) {
   const card = h('details', { class: 'card pad' },
     h('summary', { style: { cursor: 'pointer', fontWeight: 600, fontSize: '16px' } }, `Standard list (dropdown) · ${catalog.length} item${catalog.length === 1 ? '' : 's'}${pending && pending.length ? ` · ${pending.length} to review` : ''}`));
@@ -1222,18 +1226,6 @@ function standardListCard(catalog, pending) {
   card.appendChild(h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #E6E9E4' } }, nk, h('div', { style: { flex: '1 1 260px' } }, nn), ni,
     h('button', { type: 'button', class: 'btn small dark', onclick: () => nn.value.trim() && post({ action: 'catalog_add', item_kind: nk.value, item_name: nn.value, requires_ppm: nk.value === 'MACHINE' && ni.value ? 'Y' : 'N', ppm_interval_months: nk.value === 'MACHINE' && ni.value ? Number(ni.value) : null }, 'Added to the list.') }, 'Add to list')));
 
-  // one-click load of the department list shipped with the website
-  const loadBtn = h('button', { type: 'button', class: 'btn small', hidden: true, onclick: async () => {
-    if (!STD_LIST || !STD_LIST.length) return;
-    if (!confirm(`Load the department list (${STD_LIST.length} items) into the dropdown? Items already there are kept.`)) return;
-    await post({ action: 'catalog_bulk', items: STD_LIST }, 'Department list loaded.');
-  } }, 'Load the department list');
-  card.appendChild(loadBtn);
-  (async () => {
-    try { if (!STD_LIST) STD_LIST = (await (await fetch('/data/catalog.json', { cache: 'no-store' })).json()).items || []; } catch { STD_LIST = []; }
-    const missing = STD_LIST.filter((x) => !catalog.some((c) => c.item_kind === x.item_kind && c.item_name.toLowerCase() === String(x.item_name).toLowerCase()));
-    if (missing.length) { loadBtn.hidden = false; loadBtn.textContent = `Load the department list (${missing.length} new item${missing.length === 1 ? '' : 's'})`; }
-  })();
   return card;
 }
 
