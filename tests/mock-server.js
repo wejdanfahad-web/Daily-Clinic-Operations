@@ -35,7 +35,7 @@ const D = Object.fromEntries(doctors.map((d) => [d.doctor_id, d]));
 const ST = Object.fromEntries(staff.map((s) => [s.staff_id, s]));
 
 let logSeq = 100, grpSeq = 100;
-const n2o = [];
+const n2o = []; const anns = [];
 const logs = []; // all rows incl. cancelled
 function addRow(r, by = 'seed') {
   const row = { log_id: ++logSeq, action: r.action || 'ASSIGN', supersedes_log_id: r.supersedes_log_id || null, work_date: r.work_date, session_code: r.session, staff_id: r.staff_id,
@@ -241,6 +241,16 @@ function apiHandler(req, res, url, body) {
       }
       if (q.list) { if (!need('ADMIN')) return; return send(res, 200, { bookings: bookings.filter((b) => b.status !== 'CANCELLED') }); }
       { const bs = bookings.filter((b) => b.work_date === q.date && b.status !== 'CANCELLED'); return send(res, 200, { AM: bs.filter((b) => b.session_code === 'AM').length, PM: bs.filter((b) => b.session_code === 'PM').length, day: bs.length, limits: { per_session: 2, per_day: 3 } }); }
+    case 'announce': {
+      if (req.method === 'GET' && q.list) { if (!need('ADMIN')) return; return send(res, 200, { announcements: anns.slice().reverse() }); }
+      if (req.method === 'GET') { if (!need()) return; return send(res, 200, { announcements: anns.filter((a) => a.audience === 'ALL' || a.audience.split(',').includes(String(session.sid))).reverse() }); }
+      if (!need('ADMIN')) return;
+      if (!String(body.message || '').trim()) return send(res, 400, { error: 'Write the message.' });
+      const to = body.to === 'ALL' ? staff : staff.filter((x) => body.to.includes(x.staff_id));
+      anns.push({ announcement_id: anns.length + 1, title: body.title || null, message: body.message, audience: body.to === 'ALL' ? 'ALL' : to.map((x) => x.staff_id).join(','),
+        audience_label: body.to === 'ALL' ? 'All staff' : to.map((x) => x.display_name).join(', '), sent_by: session.name, sent_at: today + ' 10:05' });
+      return send(res, 200, { ok: true, recipients: to.length, held: false, delivered: 0, queued: 0, no_phone: to.length, failed: 0 });
+    }
     case 'n2o-bookings': {
       if (req.method === 'GET' && q.list) { if (!need('ADMIN')) return; return send(res, 200, { bookings: n2o.filter((x) => x.status !== 'CANCELLED') }); }
       if (req.method === 'GET') { const t = n2o.filter((x) => x.work_date === q.date && x.status !== 'CANCELLED'); return send(res, 200, { date: q.date, AM: t.some((x) => x.session_code === 'AM'), PM: t.some((x) => x.session_code === 'PM') }); }

@@ -439,7 +439,10 @@ async function renderAssign(app) {
     h('button', { type: 'button', class: 'btn', onclick: () => go('assign', nextWorkday(date, 1)) }, 'Next day →')));
 
   const side = h('div', { class: 'side' });
-  app.appendChild(h('div', { class: 'daily' }, board, side));
+  const mainCol = h('div', { class: 'maincol' }, board);
+  app.appendChild(h('div', { class: 'daily' }, mainCol, side));
+  if (isCic()) mainCol.appendChild(announceCard());
+  else if (isStaff()) { const a = await myAnnouncementsCard(); if (a) mainCol.appendChild(a); }
 
   side.appendChild(await dutiesCard(date));
   if (isStaff()) side.appendChild(notifyCard());
@@ -819,6 +822,84 @@ function bookSurgeryCard() {
     h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Date', date), h('div', { class: 'f', role: 'group', 'aria-label': 'Session', style: { display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px', color: '#4F5D5A' } }, 'Session', h('div', { class: 'seg' }, segBtns))),
     h('label', { class: 'f' }, 'Note (optional, no patient details)', note), honey,
     slots, err, send, ok);
+}
+
+// ---------- announcements: the CIC sends to all staff or chosen staff
+function announceCard() {
+  const card = h('section', { class: 'card pad', 'aria-label': 'Send an announcement' });
+  const title = h('input', { class: 'in', maxlength: 80, placeholder: 'Title (optional), e.g. Staff meeting' });
+  const msg = h('textarea', { class: 'in', maxlength: 500, rows: 3, placeholder: 'Write the announcement…', style: { height: 'auto', padding: '10px 12px', resize: 'vertical', fontFamily: 'inherit' } });
+  const left = h('span', { class: 'note' }, '500 characters left');
+  msg.addEventListener('input', () => { left.textContent = `${500 - msg.value.length} characters left`; });
+  let mode = 'ALL';
+  const chosen = new Set();
+  const people = S.ref.staff.filter((x) => x.employment_status === 'ACTIVE').sort((a, b) => a.display_name.localeCompare(b.display_name));
+  const pickBox = h('div', { hidden: true, style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } },
+    people.map((p) => {
+      const b = h('button', { type: 'button', class: 'btn small', 'aria-pressed': 'false', onclick: () => {
+        if (chosen.has(p.staff_id)) chosen.delete(p.staff_id); else chosen.add(p.staff_id);
+        b.setAttribute('aria-pressed', chosen.has(p.staff_id) ? 'true' : 'false');
+        b.style.background = chosen.has(p.staff_id) ? '#16302F' : ''; b.style.color = chosen.has(p.staff_id) ? '#fff' : '';
+      } }, p.display_name);
+      return b;
+    }));
+  const seg = ['ALL', 'PICK'].map((k) => h('button', { type: 'button', 'aria-pressed': k === mode ? 'true' : 'false', onclick: () => {
+    mode = k; seg.forEach((b, i) => b.setAttribute('aria-pressed', ['ALL', 'PICK'][i] === k ? 'true' : 'false')); pickBox.hidden = k !== 'PICK';
+  } }, k === 'ALL' ? 'All staff' : 'Choose staff'));
+  const err = h('div', { class: 'msg bad', hidden: true, role: 'alert' });
+  const ok = h('div', { class: 'msg ok', hidden: true, role: 'status' });
+  const history = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } });
+  const loadHistory = async () => {
+    history.textContent = '';
+    try {
+      const r = await api('announce?list=sent&t=' + Date.now());
+      if (!r.announcements.length) return;
+      history.appendChild(h('div', { style: { fontSize: '12px', color: '#4F5D5A', marginTop: '6px' } }, 'Recently sent'));
+      for (const a of r.announcements.slice(0, 5)) {
+        history.appendChild(h('div', { style: { borderTop: '1px solid #EEF0EC', paddingTop: '6px', fontSize: '13px' } },
+          h('div', null, a.title ? h('b', null, a.title + ' · ') : null, a.message),
+          h('div', { class: 'note' }, `${fmtDay(a.sent_at.slice(0, 10))} ${a.sent_at.slice(11)} · to ${a.audience_label}`)));
+      }
+    } catch { /* history is optional */ }
+  };
+  const send = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
+    err.hidden = true; ok.hidden = true;
+    if (msg.value.trim().length < 2) { err.textContent = 'Write the message.'; err.hidden = false; msg.focus(); return; }
+    if (mode === 'PICK' && !chosen.size) { err.textContent = 'Choose at least one staff member, or pick All staff.'; err.hidden = false; return; }
+    const who = mode === 'ALL' ? 'all staff' : `${chosen.size} staff member${chosen.size === 1 ? '' : 's'}`;
+    if (!confirm(`Send this announcement to ${who}?`)) return;
+    send.disabled = true;
+    try {
+      const r = await api('announce', { method: 'POST', body: { title: title.value, message: msg.value, to: mode === 'ALL' ? 'ALL' : [...chosen] } });
+      const parts = [];
+      if (r.held) parts.push(`It's quiet hours, so phones get it at 7:30 AM`);
+      else if (r.delivered) parts.push(`${r.delivered} phone${r.delivered === 1 ? '' : 's'} notified`);
+      if (r.no_phone) parts.push(`${r.no_phone} without notifications on will see it in the app`);
+      ok.textContent = `Sent to ${r.recipients} staff. ${parts.join(' · ')}.`; ok.hidden = false;
+      title.value = ''; msg.value = ''; left.textContent = '500 characters left';
+      chosen.clear(); pickBox.querySelectorAll('button').forEach((b) => { b.setAttribute('aria-pressed', 'false'); b.style.background = ''; b.style.color = ''; });
+      loadHistory();
+    } catch (e) { err.textContent = e.message; err.hidden = false; }
+    send.disabled = false;
+  } }, 'Send announcement');
+  card.append(h('div', { class: 'row-between' }, h('h2', null, 'Send an announcement'), h('span', { class: 'note' }, 'Phone notification + shown in the app')),
+    h('div', { class: 'seg', role: 'group', 'aria-label': 'Send to', style: { maxWidth: '320px' } }, seg), pickBox,
+    h('label', { class: 'f' }, 'Title', title), h('label', { class: 'f' }, 'Message', msg), left, err,
+    h('div', null, send), ok, history);
+  loadHistory();
+  return card;
+}
+
+// ---------- staff: announcements for me (last 14 days)
+async function myAnnouncementsCard() {
+  let list = [];
+  try { list = (await api('announce?t=' + Date.now())).announcements; } catch { return null; }
+  if (!list.length) return null;
+  return h('section', { class: 'card pad', 'aria-label': 'Announcements' },
+    h('h2', null, 'Announcements'),
+    ...list.slice(0, 5).map((a) => h('div', { style: { borderTop: '1px solid #EEF0EC', paddingTop: '8px', fontSize: '14px' } },
+      a.title ? h('b', null, a.title) : null, h('div', { style: { whiteSpace: 'pre-wrap' } }, a.message),
+      h('div', { class: 'note' }, `${fmtDay(a.sent_at.slice(0, 10))} ${a.sent_at.slice(11)} · ${a.sent_by.replace(/\s*\(acting CIC\)$/, '')}`))));
 }
 
 // ---------- book Clinic 11 for nitrous oxide (public, for doctors)

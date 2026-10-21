@@ -601,6 +601,23 @@ function ev(method, { body, query, cookie } = {}) {
     assert.strictEqual(r.statusCode, 401, 'list is CIC only');
   });
 
+  await t('announcements: CIC sends to all or chosen staff; staff only read theirs', async () => {
+    let notified = 0, inserted = null;
+    responder = (sql, binds) => /user_tab|user_tables|user_indexes|MICROSCOPE|BIB HOLDER|EPT/.test(sql) ? rows([{ N: 1 }])
+      : /INSERT INTO announcements/.test(sql) ? ((inserted = binds), done())
+      : /FROM staff WHERE employment_status/.test(sql) ? rows([{ STAFF_ID: 3, DISPLAY_NAME: 'Nawal' }, { STAFF_ID: 9, DISPLAY_NAME: 'Haifa' }].filter((r) => !binds.i0 || [binds.i0, binds.i1].includes(r.STAFF_ID)))
+      : /MAX\(announcement_id\)/.test(sql) ? rows([{ ID: 7 }]) : /push_subscriptions/.test(sql) ? ((notified++), rows([])) : rows([]);
+    let r = await F('announce')(ev('POST', { cookie: staff, body: { message: 'hi', to: 'ALL' } }));
+    assert.strictEqual(r.statusCode, 403, 'staff cannot send');
+    r = await F('announce')(ev('POST', { cookie: cic, body: { title: 'Meeting', message: 'Staff meeting at 12:30', to: [9] } }));
+    assert.strictEqual(r.statusCode, 200, r.body);
+    assert.strictEqual(JSON.parse(r.body).recipients, 1);
+    assert.strictEqual(inserted.a, '9'); assert.strictEqual(inserted.l, 'Haifa');
+    r = await F('announce')(ev('POST', { cookie: cic, body: { message: 'Eid holiday schedule is out', to: 'ALL' } }));
+    assert.strictEqual(JSON.parse(r.body).recipients, 2);
+    assert.strictEqual(inserted.a, 'ALL');
+  });
+
   await t('wrong HTTP method → 405', async () => {
     const r = await F('login')(ev('GET'));
     assert.strictEqual(r.statusCode, 405);

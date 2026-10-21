@@ -78,6 +78,8 @@ label.f { display: flex; flex-direction: column; gap: 4px; font-size: 12px; colo
 /* ---------- daily board ---------- */
 .daily { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
 .daily > .board { flex: 999 1 640px; min-width: 0; overflow: hidden; }
+.daily > .maincol { flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 20px; }
+.maincol > .board { overflow: hidden; }
 .daily > .side { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 20px; }
 .scroll-x { overflow-x: auto; }
 table.grid { width: 100%; border-collapse: collapse; }
