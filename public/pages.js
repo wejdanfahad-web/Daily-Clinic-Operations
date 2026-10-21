@@ -772,8 +772,12 @@ function statCard(label, value, color) {
   return h('div', { class: 'kpi' }, h('div', { class: 'l' }, label), h('div', { class: 'v', style: { fontSize: '22px', color: color || '#17262B' } }, value));
 }
 
+// Doctors the CIC removed from the department: ignored if a Word timetable still lists them.
+const REMOVED_DOCTORS = /albaz|ziyad\W*(al)?\W*zahrani/i;
+
 function renderCapture(app) {
   const cap = TT.cap;
+  cap.rows = cap.rows.filter((r) => !REMOVED_DOCTORS.test(String(r.raw || '')));
   const { docs } = refMaps();
   const unmatched = [...new Set(cap.rows.filter((r) => !r.id).map((r) => r.raw))];
   const guessed = [...new Map(cap.rows.filter((r) => r.id && r.how === 'guess').map((r) => [r.raw, r])).values()];

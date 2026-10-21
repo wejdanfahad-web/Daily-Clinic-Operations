@@ -165,6 +165,27 @@ CREATE TABLE n2o_bookings (
   seen_at               TIMESTAMP WITH TIME ZONE
 )'; END;`,
   },
+  {
+    id: '15_remove_albaz_alzahrani',
+    // CIC request (Oct 2026): Dr. Abdullah Albaz and Dr. Ziyad Alzahrani are removed from every list.
+    // Their past assignments stay in the log; they leave the active doctors, the timetable and the name aliases.
+    optional: true,
+    done: `SELECT CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END AS n FROM doctors
+            WHERE is_active = 'Y' AND (REGEXP_LIKE(display_name || ' ' || full_name, 'albaz', 'i')
+                                       OR REGEXP_LIKE(display_name || ' ' || full_name, 'ziyad\W*(al)?\W*zahrani', 'i'))`,
+    run: `
+BEGIN
+  FOR d IN (SELECT doctor_id FROM doctors
+             WHERE REGEXP_LIKE(display_name || ' ' || full_name, 'albaz', 'i')
+                OR REGEXP_LIKE(display_name || ' ' || full_name, 'ziyad\W*(al)?\W*zahrani', 'i')) LOOP
+    UPDATE doctors SET is_active = 'N', updated_at = SYSTIMESTAMP WHERE doctor_id = d.doctor_id;
+    DELETE FROM doctor_timetable WHERE doctor_id = d.doctor_id;
+    DELETE FROM doctor_aliases WHERE doctor_id = d.doctor_id;
+  END LOOP;
+  DELETE FROM doctor_aliases WHERE alias_norm LIKE '%albaz%' OR REGEXP_LIKE(alias_norm, 'ziyad (al )?zahrani');
+  COMMIT;
+END;`,
+  },
 ];
 
 let ready = null;
