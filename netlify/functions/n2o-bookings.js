@@ -78,7 +78,7 @@ BEGIN
   SELECT COUNT(*) INTO l_n FROM n2o_bookings
    WHERE work_date = TO_DATE(:d, 'YYYY-MM-DD') AND session_code = :s AND status <> 'CANCELLED';
   IF l_n > 0 THEN
-    RAISE_APPLICATION_ERROR(-20036, 'Clinic 11 is already booked for nitrous oxide on ' || TO_CHAR(TO_DATE(:d, 'YYYY-MM-DD'), 'Dy DD Mon', 'NLS_DATE_LANGUAGE=ENGLISH')
+    RAISE_APPLICATION_ERROR(-20036, 'Clinic 11 is already booked for N2O sedation on ' || TO_CHAR(TO_DATE(:d, 'YYYY-MM-DD'), 'Dy DD Mon', 'NLS_DATE_LANGUAGE=ENGLISH')
       || ' · ' || :s || '. Please pick another session.');
   END IF;
   INSERT INTO n2o_bookings (doctor_id, pedo_resident, supervisor_doctor_id, work_date, session_code, note)
@@ -90,7 +90,7 @@ END;`, { doc, pedo, sup, d: date, s: session, note });
   const nm = Object.fromEntries(names.map((n) => [Number(n.doctor_id), n.display_name]));
   const summary = `${nm[doc]} with PEDO ${pedo} (supervisor ${nm[sup]}) · ${date} · ${session}`;
   try {
-    await notifyCic({ eventType: 'SURGERY_BOOKED', title: 'Clinic 11 · nitrous oxide booking', body: summary + (note ? ` · ${note}` : ''), url: '/#/assign', dedupeKey: `N2O:${doc}:${date}:${session}:${Date.now()}` });
+    await notifyCic({ eventType: 'SURGERY_BOOKED', title: 'Clinic 11 · N₂O sedation booking', body: summary + (note ? ` · ${note}` : ''), url: '/#/assign', dedupeKey: `N2O:${doc}:${date}:${session}:${Date.now()}` });
   } catch (e) { console.error('notify CIC failed', e); }
   return json(200, { ok: true, message: `Booked. The CIC has been notified: Clinic 11 · ${summary}.` });
 });

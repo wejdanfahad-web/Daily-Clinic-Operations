@@ -858,8 +858,8 @@ function bookN2OCard() {
     } catch (e) { err.textContent = e.message; err.hidden = false; }
     send.disabled = false;
   } }, 'Submit booking');
-  return h('section', { class: 'card pad', 'aria-label': 'Book clinic 11 for Nitrous Oxide Gas' },
-    h('div', { class: 'row-between' }, h('h2', null, 'Book clinic 11 for Nitrous Oxide Gas'), h('span', { class: 'pill surg' }, 'FOR DOCTORS')),
+  return h('section', { class: 'card pad', 'aria-label': 'Book Clinic 11 for N₂O Sedation' },
+    h('div', { class: 'row-between' }, h('h2', null, 'Book Clinic 11 for N₂O Sedation'), h('span', { class: 'pill surg' }, 'FOR DOCTORS')),
     h('label', { class: 'f' }, '1st operator (resident / postgraduate)', op),
     h('label', { class: 'f' }, 'Assisting dentist (PEDO resident)', pedo),
     h('label', { class: 'f' }, 'Supervisor (faculty)', sup),
@@ -870,11 +870,11 @@ function bookN2OCard() {
 
 // ---------- upcoming Clinic 11 nitrous oxide bookings (CIC)
 async function upcomingN2OCard() {
-  const card = h('section', { class: 'card pad', 'aria-label': 'Clinic 11 nitrous oxide bookings' });
+  const card = h('section', { class: 'card pad', 'aria-label': 'Clinic 11 N₂O sedation bookings' });
   try { if (!S.n2o) S.n2o = (await api('n2o-bookings?list=upcoming&t=' + Date.now())).bookings; }
-  catch (e) { card.append(h('h2', null, 'Clinic 11 · nitrous oxide'), h('div', { class: 'msg bad' }, e.message)); return card; }
+  catch (e) { card.append(h('h2', null, 'Clinic 11 · N₂O sedation'), h('div', { class: 'msg bad' }, e.message)); return card; }
   const fresh = S.n2o.filter((b) => b.status === 'NEW').length;
-  card.appendChild(h('div', { class: 'row-between' }, h('h2', null, 'Clinic 11 · nitrous oxide'), fresh ? h('span', { class: 'pill red' }, `${fresh} new`) : null));
+  card.appendChild(h('div', { class: 'row-between' }, h('h2', null, 'Clinic 11 · N₂O sedation'), fresh ? h('span', { class: 'pill red' }, `${fresh} new`) : null));
   if (!S.n2o.length) { card.appendChild(h('div', { class: 'note' }, 'No upcoming bookings. You get a notification for each new one.')); return card; }
   const act = async (b, action) => { try { await api('n2o-bookings', { method: 'POST', body: { booking_id: b.booking_id, action } }); S.n2o = null; render(); } catch (e) { toast(e.message); } };
   const ul = h('ul', { class: 'plain', style: { gap: '8px' } });
