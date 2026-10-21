@@ -221,7 +221,7 @@ END;`, { js: JSON.stringify(rows), by });
       const nm = id ? null : clean(it.item_name, 120);
       const q = Number(it.quantity);
       if (!id && !nm) throw new HttpError(400, `Row ${i + 1}: choose the instrument.`);
-      if (!Number.isInteger(q) || q < 0 || q > 9999) throw new HttpError(400, `Row ${i + 1}: enter the quantity (numbers only).`);
+      if (it.quantity === '' || it.quantity === null || it.quantity === undefined || !Number.isInteger(q) || q < 1 || q > 9999) throw new HttpError(400, `Row ${i + 1}: the quantity is required (1 or more, numbers only).`);
       return { i: id, n: nm, q };
     });
     if (!(await canEditClinic(user, cid))) throw new HttpError(403, 'You can only update the inventory of your own clinic or the clinic you work in today.');
@@ -271,8 +271,8 @@ END;`, { js: JSON.stringify(items), cid, resp, sid: user.sid, by, notes: clean(b
     if (!KINDS.includes(kind)) throw new HttpError(400, 'Choose Machine or Instrument.');
     if (!listId && !name) throw new HttpError(400, 'Choose the item from the list, or pick "Other…" and type its name.');
     if (kind === 'MACHINE' && !serial) throw new HttpError(400, 'Serial # is required for a machine.');
-    const qty = kind === 'MACHINE' ? 1 : Number(b.quantity);
-    if (!Number.isInteger(qty) || qty < 0 || qty > 9999) throw new HttpError(400, 'Enter a quantity (0 or more).');
+    const qty = kind === 'MACHINE' ? 1 : (b.quantity === '' || b.quantity === null || b.quantity === undefined ? NaN : Number(b.quantity));
+    if (!Number.isInteger(qty) || qty < (kind === 'MACHINE' ? 0 : 1) || qty > 9999) throw new HttpError(400, 'The quantity is required (1 or more).');
     const interval = b.ppm_interval_months ? Number(b.ppm_interval_months) : null;
     if (interval !== null && !(Number.isInteger(interval) && interval >= 1 && interval <= 120)) throw new HttpError(400, 'PPM interval must be 1–120 months.');
     if (!(await canEditClinic(user, cid))) throw new HttpError(403, 'You can only update the inventory of your own clinic or the clinic you work in today.');
@@ -341,6 +341,7 @@ END;`, {
     if (row.item_kind === 'MACHINE' && serial === null) throw new HttpError(400, 'Serial # is required for a machine.');
     let qty = b.quantity === undefined || b.quantity === '' ? null : Number(b.quantity);
     if (qty !== null && (!Number.isInteger(qty) || qty < 0 || qty > 9999)) throw new HttpError(400, 'Enter a quantity (0 or more).');
+    if (row.item_kind === 'INSTRUMENT' && b.quantity !== undefined && !(qty >= 1) && (status || 'IN_SERVICE') !== 'RETIRED') throw new HttpError(400, 'The quantity is required (1 or more).');
     if (row.item_kind === 'MACHINE') qty = null; // one row per machine
     await exec(`
       BEGIN

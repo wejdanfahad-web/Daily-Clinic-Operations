@@ -1005,7 +1005,7 @@ PAGES.inventory = async function renderInventory(app) {
         h('td', null, h('span', { class: 'status' }, it.item_kind === 'MACHINE' ? 'Machine' : 'Instrument')),
         h('td', { class: 'name' }, it.item_name, it.list_status === 'PENDING' ? h('span', { class: 'status new', style: { marginLeft: '6px' }, title: 'Typed under Other… — waiting for the CIC' }, 'new name') : null),
         h('td', { style: { fontFamily: 'var(--mono)', fontSize: '12px' } }, it.item_kind === 'MACHINE' ? (it.serial_no || '—') : ''),
-        h('td', { class: 'score' }, it.item_kind === 'MACHINE' ? '' : it.quantity),
+        h('td', { class: 'score' }, it.item_kind === 'MACHINE' ? '' : Number(it.quantity) > 0 ? it.quantity : h('span', { class: 'status new' }, 'Quantity missing')),
         h('td', null, it.requires_ppm !== 'Y' ? '' : it.last_ppm_date ? fmtDay(it.last_ppm_date) + ' ' + it.last_ppm_date.slice(0, 4) : '—'),
         h('td', null, it.requires_ppm !== 'Y' ? '' : it.ppm_due_date ? fmtDay(it.ppm_due_date) + ' ' + it.ppm_due_date.slice(0, 4) : '—'),
         h('td', null, p[0] ? h('span', { class: 'status ' + p[1] }, p[0]) : null, it.condition_status !== 'IN_SERVICE' ? h('span', { class: 'status new', style: { marginLeft: '4px' } }, it.condition_status.replace(/_/g, ' ').toLowerCase()) : null),
@@ -1086,7 +1086,7 @@ function addItemCard(catalog) {
   };
   addRow();
   const instrumentOnly = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-    h('div', { style: { fontSize: '12px', color: '#4F5D5A' } }, 'Instrument and quantity'), rowsBox,
+    h('div', { style: { fontSize: '12px', color: '#4F5D5A' } }, 'Instrument and quantity * (quantity required)'), rowsBox,
     h('div', null, h('button', { type: 'button', class: 'btn small', onclick: () => addRow().sel.focus() }, '+ Add more')));
   const pickLabel = h('label', { class: 'f' }, 'Item', pick);
   const fillList = () => {
@@ -1118,7 +1118,7 @@ function addItemCard(catalog) {
         if (!r.sel.value && !r.q.value) continue;                       // empty row
         if (!r.sel.value) return show('Choose the instrument for each quantity.', r.sel);
         if (r.sel.value === 'OTHER' && !r.typed.value.trim()) return show('Type the instrument name.', r.typed);
-        if (!/^\d+$/.test(r.q.value)) return show('Enter the quantity (numbers only).', r.q);
+        if (!/^\d+$/.test(r.q.value) || Number(r.q.value) < 1) return show('The quantity is required: type how many (1 or more).', r.q);
         const key = r.sel.value === 'OTHER' ? 'n:' + r.typed.value.trim().toLowerCase() : 'i:' + r.sel.value;
         if (seen.has(key)) return show('The same instrument is listed twice. Put the total in one row.', r.sel);
         seen.add(key);
@@ -1214,7 +1214,8 @@ function editItem(it, ppmOnly = false) {
     const tag = h('input', { class: 'in', value: it.asset_tag || '', maxlength: 40 });
     const last = h('input', { class: 'in', type: 'date', value: it.last_ppm_date || '', max: TODAY() });
     const due = h('input', { class: 'in', type: 'date', value: it.ppm_due_date || '' });
-    const qty = h('input', { class: 'in', type: 'number', min: 0, max: 9999, value: it.quantity });
+    const qty = h('input', { class: 'in', type: 'text', inputmode: 'numeric', pattern: '[0-9]*', maxlength: 4, value: Number(it.quantity) > 0 ? String(it.quantity) : '', placeholder: 'Required' });
+    qty.addEventListener('input', () => { const v = qty.value.replace(/\D/g, ''); if (v !== qty.value) qty.value = v; });
     const status = h('select', { class: 'in' }, [['IN_SERVICE', 'In service'], ['UNDER_REPAIR', 'Under repair'], ['OUT_OF_SERVICE', 'Out of service'], ['RETIRED', 'Retired (remove from list)']].map(([v, l]) => h('option', { value: v }, l)));
     status.value = it.condition_status;
     const notes = h('input', { class: 'in', value: it.notes || '', maxlength: 200 });
@@ -1234,7 +1235,7 @@ function editItem(it, ppmOnly = false) {
     }
     body.append(h('h3', null, `${it.item_name} · Clinic ${it.clinic_id}`),
       it.responsible_name ? h('div', { class: 'note' }, 'Responsible: ', h('b', { style: { color: '#17262B' } }, it.responsible_name)) : null,
-      machine ? h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Serial # *', serial), h('label', { class: 'f' }, 'Asset tag', tag)) : h('label', { class: 'f' }, 'Quantity', qty),
+      machine ? h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Serial # *', serial), h('label', { class: 'f' }, 'Asset tag', tag)) : h('label', { class: 'f' }, 'Quantity *', qty),
       ppm ? h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Last PPM date', last), h('label', { class: 'f' }, 'Next PPM due', due)) : null,
       ppm ? h('div', { class: 'hint' }, 'Change the last PPM date and leave "next due" as it is: the due date is recalculated from the interval when one is set.') : null,
       h('label', { class: 'f' }, 'Status', status), h('label', { class: 'f' }, 'Notes', notes), err,
@@ -1246,7 +1247,10 @@ function editItem(it, ppmOnly = false) {
             bodyData.serial_no = serial.value; bodyData.asset_tag = tag.value;
             if (ppm && last.value !== (it.last_ppm_date || '')) bodyData.last_ppm_date = last.value || null;
             if (ppm && due.value !== (it.ppm_due_date || '')) bodyData.ppm_due_date = due.value || null;
-          } else bodyData.quantity = Number(qty.value);
+          } else {
+            if (status.value !== 'RETIRED' && !(/^\d+$/.test(qty.value) && Number(qty.value) >= 1)) { err.textContent = 'The quantity is required: type how many (1 or more).'; err.hidden = false; qty.focus(); return; }
+            bodyData.quantity = Number(qty.value);
+          }
           try { await api('inventory', { method: 'POST', body: bodyData }); close(); toast('Updated.'); INV.data = null; render(); }
           catch (e) { err.textContent = e.message; err.hidden = false; }
         } }, 'Save')));

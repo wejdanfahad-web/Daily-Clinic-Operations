@@ -37,6 +37,24 @@ exports.handler = async () => {
     });
     counts[res.status] = (counts[res.status] || 0) + 1;
   }
+  // Instruments with no quantity: tell the responsible staff member (first time, then each Sunday until fixed)
+  const noQty = await query(`
+    SELECT e.responsible_staff_id AS staff_id, e.clinic_id, COUNT(*) AS n, LISTAGG(e.equipment_id, ',') WITHIN GROUP (ORDER BY e.equipment_id) AS ids
+      FROM equipment_ppm e JOIN equipment_catalog i ON i.item_id = e.item_id
+     WHERE i.item_kind = 'INSTRUMENT' AND NVL(e.quantity, 0) = 0 AND e.condition_status <> 'RETIRED' AND e.responsible_staff_id IS NOT NULL
+     GROUP BY e.responsible_staff_id, e.clinic_id`);
+  for (const q of noQty) {
+    const n = Number(q.n);
+    const res = await notifyStaff(q.staff_id, {
+      eventType: 'LOW_STOCK',
+      title: 'Add your instrument quantities',
+      body: `${n} instrument${n === 1 ? ' has' : 's have'} no quantity in Clinic ${q.clinic_id}. Open Clinic inventory and tap Update to add how many.`,
+      url: `/#/inventory/${q.clinic_id}`,
+      dedupeKey: `QTY_MISSING:ST${q.staff_id}:CL${q.clinic_id}:${String(q.ids).slice(0, 120)}${sunday ? ':WEEK:' + today : ''}`,
+    });
+    counts['QTY_' + res.status] = (counts['QTY_' + res.status] || 0) + 1;
+  }
+
   // CIC: one weekly summary (Sunday 07:30), not one message per machine
   let summary = null;
   if (sunday) {
