@@ -98,7 +98,7 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
 
   // ---- standard list management (CIC)
   if (String(b.action || '').startsWith('catalog_')) {
-    if (!isCic) throw new HttpError(403, 'Only the CIC can change the standard list.');
+    if (!isCic || user.acting) throw new HttpError(403, 'Only the CIC can change the standard list.');
     const addOne = async (it) => {
       const kind = String(it.item_kind || '').toUpperCase();
       const name = clean(it.item_name, 120);
@@ -155,7 +155,7 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
 
   // ---- CIC: import machines from the department's Excel sheets (parsed in the browser)
   if (b.action === 'import') {
-    if (!isCic) throw new HttpError(403, 'Only the CIC can import the inventory sheet.');
+    if (!isCic || user.acting) throw new HttpError(403, 'Only the CIC can import the inventory sheet.');
     if (!Array.isArray(b.rows) || !b.rows.length) throw new HttpError(400, 'No machines to import.');
     if (b.rows.length > 1500) throw new HttpError(400, 'Too many rows (max 1500).');
     const STAT = { FUNCTIONING: 'IN_SERVICE', 'NON-FUNCTIONING': 'OUT_OF_SERVICE', 'NON FUNCTIONING': 'OUT_OF_SERVICE', 'UNDER REPAIR': 'UNDER_REPAIR' };

@@ -1051,8 +1051,8 @@ PAGES.inventory = async function renderInventory(app) {
     setTimeout(() => { const el = document.querySelector(`section[aria-label="${target}"]`); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); el.style.boxShadow = '0 0 0 3px #9BD3C2'; setTimeout(() => { el.style.boxShadow = ''; }, 2500); } }, 50);
   }
   if (editable) app.appendChild(addItemCard(catalog));
-  if (isCic()) app.appendChild(standardListCard(catalog, INV.data.pending || []));
-  if (isCic()) { const imp = importSheetCard(); if (!summary.some((x) => Number(x.items))) imp.open = true; app.appendChild(imp); }
+  if (isCic() && !S.me.acting) app.appendChild(standardListCard(catalog, INV.data.pending || []));
+  if (isCic() && !S.me.acting) { const imp = importSheetCard(); if (!summary.some((x) => Number(x.items))) imp.open = true; app.appendChild(imp); }
 };
 
 function addItemCard(catalog) {
