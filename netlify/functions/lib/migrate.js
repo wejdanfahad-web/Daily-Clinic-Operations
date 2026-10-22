@@ -210,13 +210,13 @@ END;`,
   {
     id: '17_add_dr_kholoud',
     optional: true,
-    // CIC request (Oct 2026): Dr. Kholoud joins as faculty (FC). Her sessions are set in the Timetable page.
-    done: `SELECT COUNT(*) AS n FROM doctors WHERE UPPER(display_name) = 'DR. KHOLOUD' AND category_code = 'FC' AND is_active = 'Y'`,
+    // CIC request (Oct 2026): Dr. Kholoud joins as a specialist (SP). Her sessions are set in the Timetable page.
+    done: `SELECT COUNT(*) AS n FROM doctors WHERE UPPER(display_name) = 'DR. KHOLOUD' AND category_code = 'SP' AND is_active = 'Y'`,
     run: `
 BEGIN
-  UPDATE doctors SET category_code = 'FC', is_active = 'Y', updated_at = SYSTIMESTAMP WHERE UPPER(display_name) = 'DR. KHOLOUD';
+  UPDATE doctors SET category_code = 'SP', is_active = 'Y', updated_at = SYSTIMESTAMP WHERE UPPER(display_name) = 'DR. KHOLOUD';
   IF SQL%ROWCOUNT = 0 THEN
-    INSERT INTO doctors (display_name, title, category_code) VALUES ('Dr. Kholoud', 'DR', 'FC');
+    INSERT INTO doctors (display_name, title, category_code) VALUES ('Dr. Kholoud', 'DR', 'SP');
   END IF;
   COMMIT;
 END;`,
