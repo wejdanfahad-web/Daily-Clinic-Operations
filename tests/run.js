@@ -553,6 +553,63 @@ function ev(method, { body, query, cookie } = {}) {
     push._setClock(null);
   });
 
+  await t('sick leave today: Instruments duty moves to the next in line, CIC told', async () => {
+    const http = require('../netlify/functions/lib/http');
+    const push = require('../netlify/functions/lib/push');
+    http._setHttpClock(() => new Date('2026-10-20T07:00:00Z')); // Tue 10:00 Riyadh
+    push._setClock(() => new Date('2026-10-20T07:00:00Z'));
+    let cancelled = false; const assigned = []; let cicTold = false; let histCalls = 0;
+    responder = (sql, b) => {
+      if (/FROM assignment_types/.test(sql)) return rows([
+        { TYPE_CODE: 'SICK_LEAVE', NEEDS_DOCTOR: 'N', NOTIFY_ON_ASSIGN: 'N', TYPE_NAME: 'Sick leave (SL)', CATEGORY: 'UNAVAILABLE' },
+        { TYPE_CODE: 'INSTRUMENTS', NEEDS_DOCTOR: 'N', NOTIFY_ON_ASSIGN: 'N', TYPE_NAME: 'Instruments', CATEGORY: 'DUTY' }]);
+      if (/^\s*DECLARE/.test(sql)) {
+        if (b.e0_a === 'CANCEL') cancelled = true;
+        else if (b.e0_t === 'INSTRUMENTS') assigned.push(b.e0_st);
+        return done();
+      }
+      if (/FROM v_assignment_history/.test(sql)) { histCalls++; return rows(histCalls === 1 ? [{ LOG_ID: 90, ACTION: 'ASSIGN', SESSION_CODE: 'AM', STAFF_ID: 5, STAFF_NAME: 'Haifa', TYPE_CODE: 'SICK_LEAVE', TYPE_NAME: 'Sick leave (SL)' }] : []); }
+      if (/v_rotation_queue/.test(sql)) return rows([5, 6, 7].map((id, i) => ({ ROTATION_CODE: 'INSTRUMENTS', STAFF_ID: id, STAFF_NAME: ['Haifa', 'Noura', 'Sara'][i], QUEUE_POSITION: i + 1 })));
+      if (/FROM v_assignments_current WHERE work_date/.test(sql)) return rows([
+        { LOG_ID: 90, STAFF_ID: 5, STAFF_NAME: 'Haifa', SESSION_CODE: 'AM', TYPE_CODE: 'SICK_LEAVE', CATEGORY: 'UNAVAILABLE' },
+        ...(cancelled ? [] : [{ LOG_ID: 70, STAFF_ID: 5, STAFF_NAME: 'Haifa', SESSION_CODE: 'AM', TYPE_CODE: 'INSTRUMENTS', CATEGORY: 'DUTY' }]),
+        { LOG_ID: 71, STAFF_ID: 6, STAFF_NAME: 'Noura', SESSION_CODE: 'PM', TYPE_CODE: 'INSTRUMENTS', CATEGORY: 'DUTY' }]);
+      if (/app_role = 'ADMIN'/.test(sql)) { if (!/display_name/.test(sql)) cicTold = true; return rows([{ STAFF_ID: 1, DISPLAY_NAME: 'Wejdan' }]); }
+      if (/COUNT/.test(sql)) return rows([{ N: 0 }]);
+      return /^\s*BEGIN/.test(sql) ? done() : rows([]);
+    };
+    const r = await F('assign')(ev('POST', { cookie: cic, body: { work_date: '2026-10-20', entries: [{ session: 'AM', staff_id: 5, type_code: 'SICK_LEAVE' }] } }));
+    assert.strictEqual(r.statusCode, 200, r.body);
+    const b = JSON.parse(r.body);
+    assert(cancelled, 'her duty row cancelled');
+    assert.deepStrictEqual(assigned, [7], 'next free person (Noura holds PM) takes AM');
+    assert.deepStrictEqual(b.handed_over, [{ session: 'AM', from: 'Haifa', to: 'Sara' }]);
+    assert(cicTold, 'CIC notified');
+    http._setHttpClock(null); push._setClock(null);
+  });
+
+  await t('vitals check: CIC told at 08:45 when nobody is on AM Vitals; weekends skipped', async () => {
+    const push = require('../netlify/functions/lib/push');
+    push._setClock(() => new Date('2026-10-20T05:45:00Z')); // Tue 08:45 Riyadh
+    let n = 0, cicTold = false, sess = null;
+    responder = (sql, b) => {
+      if (/type_code = 'VITALS'/.test(sql)) { sess = b.s; return rows([{ N: n }]); }
+      if (/app_role = 'ADMIN'/.test(sql)) { cicTold = true; return rows([{ STAFF_ID: 99 }]); }
+      if (/COUNT/.test(sql)) return rows([{ N: 0 }]);
+      return /^\s*(BEGIN|DECLARE)/.test(sql) ? done() : rows([]);
+    };
+    let r = JSON.parse((await F('vitals-check-am')({})).body);
+    assert.strictEqual(sess, 'AM'); assert.strictEqual(r.vitals, 0); assert(cicTold, 'CIC told');
+    n = 1; cicTold = false;
+    r = JSON.parse((await F('vitals-check-pm')({})).body);
+    assert.strictEqual(sess, 'PM'); assert.strictEqual(r.vitals, 1); assert(!cicTold, 'Vitals set: nothing sent');
+    push._setClock(() => new Date('2026-10-23T05:45:00Z')); // Friday
+    sess = null;
+    r = JSON.parse((await F('vitals-check-am')({})).body);
+    assert.strictEqual(r.skipped, 'weekend'); assert.strictEqual(sess, null);
+    push._setClock(null);
+  });
+
   await t('acting CIC: rule from 15:00 the working day before to the end of the in-charge session', async () => {
     const { actingFrom } = require('../netlify/functions/lib/acting');
     const am = [{ staff_id: 7, work_date: '2026-10-25', session_code: 'AM' }];   // Sunday AM

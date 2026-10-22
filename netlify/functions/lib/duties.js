@@ -87,4 +87,37 @@ async function recordDuties(date, recordedBy) {
   return { written, duties: await computeDuties(date) };
 }
 
-module.exports = { computeDuties, recordDuties, pick, DUTY_TYPES };
+// Same-day sick leave: if someone just put on sick leave holds today's Instruments duty in that
+// session, cancel her duty and hand it to the next in line. Returns [{ session, from, to }].
+const HANDOVER_TYPES = ['SICK_LEAVE'];
+async function handOverDuties(date, written, recordedBy) {
+  const sick = written.filter((w) => w.action !== 'CANCEL' && HANDOVER_TYPES.includes(w.type_code));
+  if (!sick.length) return [];
+  const { board } = await loadDay(date);
+  const cancels = [];
+  for (const s of sick) {
+    for (const r of board) {
+      if (r.type_code !== 'INSTRUMENTS' || Number(r.staff_id) !== Number(s.staff_id)) continue;
+      const overlaps = s.session_code === 'DAY' || inSession(r, s.session_code);
+      if (!overlaps || cancels.some((c) => c.log_id === r.log_id)) continue;
+      cancels.push({ log_id: r.log_id, session: r.session_code, staff_id: Number(r.staff_id), name: r.staff_name });
+    }
+  }
+  if (!cancels.length) return [];
+  await writeEntries({
+    workDate: date, recordedBy,
+    entries: cancels.map((c) => ({ session: c.session, staff_id: c.staff_id, type_code: 'INSTRUMENTS', supersedes_log_id: Number(c.log_id), action: 'CANCEL', notes: 'sick leave' })),
+  });
+  const d = await computeDuties(date);
+  const entries = [];
+  const out = [];
+  for (const c of cancels) {
+    const p = d.instruments[c.session];
+    if (p && !p.recorded) { entries.push({ session: c.session, staff_id: p.staff_id, type_code: 'INSTRUMENTS', notes: 'auto: ' + c.name + ' on sick leave' }); out.push({ session: c.session, from: c.name, to: p, fromId: c.staff_id }); }
+    else out.push({ session: c.session, from: c.name, to: null, fromId: c.staff_id });
+  }
+  if (entries.length) await writeEntries({ workDate: date, entries, recordedBy });
+  return out;
+}
+
+module.exports = { computeDuties, recordDuties, handOverDuties, pick, DUTY_TYPES };

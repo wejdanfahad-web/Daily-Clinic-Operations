@@ -18,6 +18,12 @@
 [functions."publish-check"]
   schedule = "0 11 * * *"
 
+# 08:45 and 12:45 Riyadh (05:45 / 09:45 UTC): tell the CIC if nobody is on Vitals for the session.
+[functions."vitals-check-am"]
+  schedule = "45 5 * * *"
+[functions."vitals-check-pm"]
+  schedule = "45 9 * * *"
+
 # Nice API paths: /api/board → /.netlify/functions/board
 [[redirects]]
   from   = "/api/*"

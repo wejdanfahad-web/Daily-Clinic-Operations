@@ -603,10 +603,12 @@ function editCell(m, sess) {
       }
       save.disabled = true;
       try {
-        await api('assign', { method: 'POST', body: { work_date: date, client_request_id: crypto.randomUUID(), entries: [{
+        const res = await api('assign', { method: 'POST', body: { work_date: date, client_request_id: crypto.randomUUID(), entries: [{
           session: wholeDay.checked && !dayLabel.hidden ? 'DAY' : sess, staff_id: m.staff.staff_id, type_code: typeSel.value,
           doctor_ids: ids, clinic_id: clinicLabel.hidden ? null : Number(clinicSel.value) || null, notes: notes.value || null }] } });
-        close(); toast('Saved.'); await refreshBoard();
+        const ho = (res && res.handed_over) || [];
+        close(); toast(ho.length ? 'Saved. ' + ho.map((x) => x.to ? `${x.session} instruments moved to ${x.to}.` : `${x.session} instruments: nobody free, please choose.`).join(' ') : 'Saved.');
+        await refreshBoard();
       } catch (err) { showErr(err.message); save.disabled = false; }
     } }, 'Save');
     body.appendChild(h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn', onclick: close }, 'Close'), save));

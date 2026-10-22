@@ -9,7 +9,8 @@
 //   ]
 // }
 const { writeEntries } = require('./lib/assignments');
-const { notifyStaff } = require('./lib/push');
+const { notifyStaff, notifyCic } = require('./lib/push');
+const { handOverDuties } = require('./lib/duties');
 const { handler, json, parseBody, HttpError, isIsoDate, riyadhToday, requireCicOrInCharge } = require('./lib/http');
 
 exports.handler = handler(['POST'], async (event) => {
@@ -43,5 +44,24 @@ exports.handler = handler(['POST'], async (event) => {
     });
     notified.push({ log_id: w.log_id, status: r.status });
   }
-  return json(200, { ok: true, client_request_id: crid, written, notified });
+  // Sick leave today while holding the Instruments duty: the next in line takes it over.
+  let handedOver = [];
+  if (work_date === today) {
+    try { handedOver = await handOverDuties(work_date, written, `auto (sick leave) by ${user.name} (#${user.sid})`); }
+    catch (e) { console.error('duty hand-over', e.message); }
+    for (const h of handedOver) {
+      const when = h.session === 'PM' ? 'PM instruments from CSSD at 12:40' : 'AM instruments from CSSD at 8:40';
+      if (h.to) {
+        await notifyStaff(h.to.staff_id, { eventType: 'DAILY_DUTY', title: 'Your duty today', body: `${when} (covering ${h.from})`, url: `/#/assign/${work_date}`, dedupeKey: `HANDOVER:${work_date}:${h.session}:${h.to.staff_id}:${Date.now()}` });
+      }
+      await notifyCic({
+        eventType: 'SCHEDULE_CHANGE',
+        title: h.to ? 'Instruments duty handed over' : 'Instruments duty needs someone',
+        body: h.to ? `${h.from} is on sick leave. ${h.session} instruments now: ${h.to.name}.` : `${h.from} is on sick leave and nobody is free for ${h.session} instruments. Please choose someone.`,
+        url: `/#/assign/${work_date}`,
+        dedupeKey: `HANDOVER-CIC:${work_date}:${h.session}:${h.fromId}:${Date.now()}`,
+      });
+    }
+  }
+  return json(200, { ok: true, client_request_id: crid, written, notified, handed_over: handedOver.map((h) => ({ session: h.session, from: h.from, to: h.to ? h.to.name : null })) });
 });
