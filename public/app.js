@@ -825,18 +825,22 @@ function bookSurgeryCard() {
 }
 
 // ---------- announcements: the CIC sends to all staff or chosen staff
+const ANN_DRAFT = { title: '', msg: '', mode: 'ALL', chosen: new Set() };   // survives page refreshes until sent
 function announceCard() {
   const card = h('section', { class: 'card pad', 'aria-label': 'Send an announcement' });
-  const title = h('input', { class: 'in', maxlength: 80, placeholder: 'Title (optional), e.g. Staff meeting' });
+  const title = h('input', { class: 'in', maxlength: 80, placeholder: 'Title (optional), e.g. Staff meeting', value: ANN_DRAFT.title });
+  title.addEventListener('input', () => { ANN_DRAFT.title = title.value; });
   const msg = h('textarea', { class: 'in', maxlength: 500, rows: 3, placeholder: 'Write the announcement…', style: { height: 'auto', padding: '10px 12px', resize: 'vertical', fontFamily: 'inherit' } });
-  const left = h('span', { class: 'note' }, '500 characters left');
-  msg.addEventListener('input', () => { left.textContent = `${500 - msg.value.length} characters left`; });
-  let mode = 'ALL';
-  const chosen = new Set();
+  msg.value = ANN_DRAFT.msg;
+  const left = h('span', { class: 'note' }, `${500 - msg.value.length} characters left`);
+  msg.addEventListener('input', () => { ANN_DRAFT.msg = msg.value; left.textContent = `${500 - msg.value.length} characters left`; });
+  let mode = ANN_DRAFT.mode;
+  const chosen = ANN_DRAFT.chosen;
   const people = S.ref.staff.filter((x) => x.employment_status === 'ACTIVE').sort((a, b) => a.display_name.localeCompare(b.display_name));
-  const pickBox = h('div', { hidden: true, style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } },
+  const pickBox = h('div', { hidden: mode !== 'PICK', style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } },
     people.map((p) => {
-      const b = h('button', { type: 'button', class: 'btn small', 'aria-pressed': 'false', onclick: () => {
+      const on = chosen.has(p.staff_id);
+      const b = h('button', { type: 'button', class: 'btn small', 'aria-pressed': on ? 'true' : 'false', style: on ? { background: '#16302F', color: '#fff' } : null, onclick: () => {
         if (chosen.has(p.staff_id)) chosen.delete(p.staff_id); else chosen.add(p.staff_id);
         b.setAttribute('aria-pressed', chosen.has(p.staff_id) ? 'true' : 'false');
         b.style.background = chosen.has(p.staff_id) ? '#16302F' : ''; b.style.color = chosen.has(p.staff_id) ? '#fff' : '';
@@ -844,7 +848,7 @@ function announceCard() {
       return b;
     }));
   const seg = ['ALL', 'PICK'].map((k) => h('button', { type: 'button', 'aria-pressed': k === mode ? 'true' : 'false', onclick: () => {
-    mode = k; seg.forEach((b, i) => b.setAttribute('aria-pressed', ['ALL', 'PICK'][i] === k ? 'true' : 'false')); pickBox.hidden = k !== 'PICK';
+    mode = k; ANN_DRAFT.mode = k; seg.forEach((b, i) => b.setAttribute('aria-pressed', ['ALL', 'PICK'][i] === k ? 'true' : 'false')); pickBox.hidden = k !== 'PICK';
   } }, k === 'ALL' ? 'All staff' : 'Choose staff'));
   const err = h('div', { class: 'msg bad', hidden: true, role: 'alert' });
   const ok = h('div', { class: 'msg ok', hidden: true, role: 'status' });
@@ -876,7 +880,7 @@ function announceCard() {
       else if (r.delivered) parts.push(`${r.delivered} phone${r.delivered === 1 ? '' : 's'} notified`);
       if (r.no_phone) parts.push(`${r.no_phone} without notifications on will see it in the app`);
       ok.textContent = `Sent to ${r.recipients} staff. ${parts.join(' · ')}.`; ok.hidden = false;
-      title.value = ''; msg.value = ''; left.textContent = '500 characters left';
+      title.value = ''; msg.value = ''; left.textContent = '500 characters left'; ANN_DRAFT.title = ''; ANN_DRAFT.msg = '';
       chosen.clear(); pickBox.querySelectorAll('button').forEach((b) => { b.setAttribute('aria-pressed', 'false'); b.style.background = ''; b.style.color = ''; });
       loadHistory();
     } catch (e) { err.textContent = e.message; err.hidden = false; }
@@ -1284,6 +1288,13 @@ document.addEventListener('DOMContentLoaded', async function start() {
   await loadMe();
   render();
   // refresh the board every 2 minutes while the page is open
-  setInterval(() => { if (S.tab === 'assign' && !$('dlg').open && document.visibilityState === 'visible') { S.board = null; S.boardsCache = {}; render(); } }, 120000);
+  // Refresh the board every 2 minutes, but never while someone is typing (an announcement, a booking…)
+  document.addEventListener('input', () => { S.lastInput = Date.now(); }, true);
+  const typing = () => {
+    const a = document.activeElement;
+    if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== 'button') return true;
+    return Date.now() - (S.lastInput || 0) < 5 * 60e3;
+  };
+  setInterval(() => { if (S.tab === 'assign' && !$('dlg').open && document.visibilityState === 'visible' && !typing()) { S.board = null; S.boardsCache = {}; render(); } }, 120000);
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 });
