@@ -12,6 +12,7 @@
 // The clinic is optional: the department timetable lists who is present; the CIC places them in clinics.
 const { query, one, exec } = require('./lib/db');
 const { handler, json, parseBody, HttpError, requireCic, isIsoDate } = require('./lib/http');
+const { ensureSchema } = require('./lib/migrate');
 const { normAlias } = require('./lib/names');
 
 function checkEntry(r, i = 0) {
@@ -24,6 +25,7 @@ function checkEntry(r, i = 0) {
 }
 
 exports.handler = handler(['GET', 'POST'], async (event) => {
+  await ensureSchema();
   const user = requireCic(event);
   const by = `${user.name} (#${user.sid})`;
 

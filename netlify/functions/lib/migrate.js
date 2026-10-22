@@ -207,6 +207,20 @@ CREATE TABLE announcements (
   EXECUTE IMMEDIATE 'ALTER TABLE notification_log ADD CONSTRAINT notif_event_ck CHECK (event_type IN (''PPM_DUE'',''PPM_OVERDUE'',''LOW_STOCK'',''SCHEDULE_CHANGE'',''IN_CHARGE'',''IN_CHARGE_SUMMARY'',''DAILY_DUTY'',''SURGERY_BOOKED'',''MONTHLY_REPORT'',''ANNOUNCEMENT''))';
 END;`,
   },
+  {
+    id: '17_add_dr_kholoud',
+    optional: true,
+    // CIC request (Oct 2026): Dr. Kholoud joins as faculty (FC). Her sessions are set in the Timetable page.
+    done: `SELECT COUNT(*) AS n FROM doctors WHERE UPPER(display_name) = 'DR. KHOLOUD' AND category_code = 'FC' AND is_active = 'Y'`,
+    run: `
+BEGIN
+  UPDATE doctors SET category_code = 'FC', is_active = 'Y', updated_at = SYSTIMESTAMP WHERE UPPER(display_name) = 'DR. KHOLOUD';
+  IF SQL%ROWCOUNT = 0 THEN
+    INSERT INTO doctors (display_name, title, category_code) VALUES ('Dr. Kholoud', 'DR', 'FC');
+  END IF;
+  COMMIT;
+END;`,
+  },
 ];
 
 let ready = null;
