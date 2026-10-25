@@ -251,6 +251,59 @@ BEGIN
   COMMIT;
 END;`,
   },
+  {
+    id: '20_faculty_supervisors',
+    optional: true,
+    // CIC request (Oct 2026): four faculty for surgery supervision (no clinic in the timetable).
+    done: `SELECT CASE WHEN COUNT(*) = 4 THEN 1 ELSE 0 END AS n FROM doctors WHERE category_code = 'FC' AND is_active = 'Y'
+            AND UPPER(display_name) IN ('PROF. HANAN BLATO', 'DR. SUMAIYAH BASUDAN', 'DR. KHOLOUD ALMANEI', 'DR. SUNDUS BUKHARI')`,
+    run: `
+DECLARE
+  TYPE t_names IS TABLE OF VARCHAR2(60);
+  l_all t_names := t_names('Prof. Hanan Blato', 'Dr. Sumaiyah Basudan', 'Dr. Kholoud Almanei', 'Dr. Sundus Bukhari');
+BEGIN
+  FOR i IN 1 .. l_all.COUNT LOOP
+    UPDATE doctors SET category_code = 'FC', is_active = 'Y', updated_at = SYSTIMESTAMP WHERE UPPER(display_name) = UPPER(l_all(i));
+    IF SQL%ROWCOUNT = 0 THEN
+      INSERT INTO doctors (display_name, title, category_code)
+      VALUES (l_all(i), CASE WHEN l_all(i) LIKE 'Prof.%' THEN 'PROF' ELSE 'DR' END, 'FC');
+    END IF;
+  END LOOP;
+  COMMIT;
+END;`,
+  },
+  {
+    id: '21_merge_sulaiman_into_alhadlaq',
+    optional: true,
+    // CIC request (Oct 2026): Prof. Sulaiman and Prof. Alhadlaq are the same person; keep Prof. Alhadlaq.
+    // His timetable sessions and name aliases move to Prof. Alhadlaq; past log rows stay as recorded.
+    done: `SELECT CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END AS n FROM doctors WHERE UPPER(display_name) = 'PROF. SULAIMAN' AND is_active = 'Y'`,
+    run: `
+DECLARE
+  l_old NUMBER; l_new NUMBER;
+BEGIN
+  SELECT MIN(doctor_id) INTO l_old FROM doctors WHERE UPPER(display_name) = 'PROF. SULAIMAN';
+  SELECT MIN(doctor_id) INTO l_new FROM doctors WHERE UPPER(display_name) = 'PROF. ALHADLAQ';
+  IF l_new IS NULL THEN
+    INSERT INTO doctors (display_name, title, category_code) VALUES ('Prof. Alhadlaq', 'PROF', 'FC') RETURNING doctor_id INTO l_new;
+  END IF;
+  UPDATE doctors SET is_active = 'Y', category_code = 'FC', updated_at = SYSTIMESTAMP WHERE doctor_id = l_new;
+  IF l_old IS NOT NULL THEN
+    UPDATE doctor_timetable t SET doctor_id = l_new
+     WHERE t.doctor_id = l_old
+       AND NOT EXISTS (SELECT 1 FROM doctor_timetable x WHERE x.doctor_id = l_new AND x.semester_id = t.semester_id
+                          AND x.weekday = t.weekday AND x.session_code = t.session_code AND NVL(x.clinic_id, 0) = NVL(t.clinic_id, 0));
+    DELETE FROM doctor_timetable WHERE doctor_id = l_old;
+    UPDATE doctor_aliases SET doctor_id = l_new WHERE doctor_id = l_old;
+    UPDATE doctors SET is_active = 'N', updated_at = SYSTIMESTAMP WHERE doctor_id = l_old;
+  END IF;
+  UPDATE doctor_aliases SET doctor_id = l_new WHERE alias_norm = 'sulaiman';
+  IF SQL%ROWCOUNT = 0 THEN
+    INSERT INTO doctor_aliases (alias_norm, doctor_id, created_by) VALUES ('sulaiman', l_new, 'CIC merge');
+  END IF;
+  COMMIT;
+END;`,
+  },
 ];
 
 let ready = null;
