@@ -1413,7 +1413,7 @@ function importSheetCard() {
     fillBtn.disabled = false;
   } }, 'Fill all clinics');
   card.insertBefore(h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', background: '#F7F8F6', borderRadius: '10px', padding: '12px 14px', marginTop: '10px' } },
-    h('b', { style: { fontSize: '14px' } }, 'Department sheet (Endo inventory tracker, Oct 2026)'),
+    h('b', { style: { fontSize: '14px' } }, 'Department sheet (Endo inventory tracker, updated 25 Oct 2026)'),
     h('div', { class: 'note' }, 'Fills every clinic in one go: dental chair, X-ray unit and microscope with PPM dates (General) and each staff member\'s machines (Individual). Enter the fill code Claude gave you.'),
     h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } }, code, fillBtn)), card.children[1]);
   file.addEventListener('change', async () => {
