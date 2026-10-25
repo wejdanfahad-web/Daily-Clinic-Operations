@@ -1408,7 +1408,7 @@ function importSheetCard() {
       const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(code.value.trim().toUpperCase()), 'PBKDF2', false, ['deriveKey']);
       const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: b64(pack.salt), iterations: pack.iter }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
       const data = JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(pack.iv) }, key, b64(pack.ct))));
-      await showRows(data.rows);
+      await showRows(data.rows, true); // staff who left are already taken out of this sheet
     } catch (e) { out.appendChild(h('div', { class: 'msg bad' }, 'That code did not work. Check it and try again.')); }
     fillBtn.disabled = false;
   } }, 'Fill all clinics');
@@ -1425,7 +1425,7 @@ function importSheetCard() {
     catch (e) { out.textContent = ''; out.appendChild(h('div', { class: 'msg bad' }, 'Could not read this file. Save it as .xlsx and try again.')); return; }
     await showRows(rows);
   });
-  async function showRows(rows) {
+  async function showRows(rows, allStaff) {
     out.textContent = '';
     if (!rows.length) { out.appendChild(h('div', { class: 'msg bad' }, 'No machines found. The sheet needs a header row with Serial and Location/Clinic columns.')); return; }
     const active = new Set(S.ref.clinics.map((c) => Number(c.clinic_id)));
@@ -1438,7 +1438,7 @@ function importSheetCard() {
     const byNo = new Map(people.filter((p) => p.employee_no && p.employment_status !== 'INACTIVE').map((p) => [String(p.employee_no).trim(), p]));
     const ids = [...new Set(inClinic.map((r) => r.staff_no).filter(Boolean))];
     const anyMatch = ids.some((i) => byNo.has(i));
-    const include = new Map(ids.map((i) => [i, !anyMatch || byNo.has(i)]));
+    const include = new Map(ids.map((i) => [i, allStaff || !anyMatch || byNo.has(i)]));
     const chosen = () => inClinic.filter((r) => !r.staff_no || include.get(r.staff_no));
 
     const summary = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } });
@@ -1462,7 +1462,8 @@ function importSheetCard() {
     if (ids.length) {
       const box = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
         h('b', { style: { fontSize: '13px' } }, 'Reported by (Staff ID)'),
-        anyMatch ? h('div', { class: 'note' }, 'IDs that don\'t belong to a current staff member are left out. Tick one to include it.')
+        allStaff ? h('div', { class: 'note' }, 'All included. An ID marked "not linked" has no staff login with that Staff ID yet; its machines go to the clinic\'s own staff.')
+        : anyMatch ? h('div', { class: 'note' }, 'IDs that don\'t belong to a current staff member are left out. Tick one to include it.')
           : h('div', { class: 'note' }, 'No Staff ID matches a staff login yet (set them in Staff & logins), so all are included. Untick anyone who has left.'));
       for (const id of ids.sort()) {
         const p = byNo.get(id);
@@ -1471,7 +1472,7 @@ function importSheetCard() {
         cb.addEventListener('change', () => { include.set(id, cb.checked); paint(); });
         box.appendChild(h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px' } }, cb,
           h('span', { style: { fontFamily: 'var(--mono)' } }, id),
-          p ? h('span', null, p.display_name) : h('span', { class: 'status new' }, anyMatch ? 'not a current staff member' : 'not linked'),
+          p ? h('span', null, p.display_name) : h('span', { class: 'status new' }, anyMatch && !allStaff ? 'not a current staff member' : 'not linked'),
           h('span', { class: 'note' }, `${mine.length} machine${mine.length === 1 ? '' : 's'} · ${[...new Set(mine.map((r) => 'Cl ' + r.clinic_id))].join(', ')}`)));
       }
       out.appendChild(box);

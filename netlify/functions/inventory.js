@@ -175,7 +175,9 @@ DECLARE
   l_item NUMBER; l_eq NUMBER;
 BEGIN
   FOR r IN (SELECT j.c, j.n, j.s, j.t, j.st, j.lp, j.due,
-                   (SELECT MIN(p.staff_id) FROM staff p WHERE UPPER(p.employee_no) = UPPER(j.sn)) AS by_staff
+                   NVL((SELECT MIN(p.staff_id) FROM staff p WHERE UPPER(p.employee_no) = UPPER(j.sn) AND p.employment_status = 'ACTIVE'),
+                       CASE WHEN j.sn IS NOT NULL THEN (SELECT MIN(h.staff_id) FROM staff h WHERE h.home_clinic_id = j.c
+                          AND h.employment_status = 'ACTIVE' AND h.app_role <> 'ADMIN') END) AS by_staff
               FROM JSON_TABLE(:js, '$[*]' COLUMNS (c NUMBER PATH '$.c', n VARCHAR2(120) PATH '$.n', s VARCHAR2(60) PATH '$.s',
                      t VARCHAR2(40) PATH '$.t', st VARCHAR2(15) PATH '$.st', lp VARCHAR2(10) PATH '$.lp', due VARCHAR2(10) PATH '$.due',
                      sn VARCHAR2(20) PATH '$.sn')) j
