@@ -1408,13 +1408,13 @@ function importSheetCard() {
       const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(code.value.trim().toUpperCase()), 'PBKDF2', false, ['deriveKey']);
       const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: b64(pack.salt), iterations: pack.iter }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
       const data = JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(pack.iv) }, key, b64(pack.ct))));
-      await showRows(data.rows, true); // staff who left are already taken out of this sheet
+      await showRows(data.rows, true, true); // staff who left are already taken out of this sheet; imports straight away
     } catch (e) { out.appendChild(h('div', { class: 'msg bad' }, 'That code did not work. Check it and try again.')); }
     fillBtn.disabled = false;
   } }, 'Fill all clinics');
   card.insertBefore(h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', background: '#F7F8F6', borderRadius: '10px', padding: '12px 14px', marginTop: '10px' } },
     h('b', { style: { fontSize: '14px' } }, 'Department sheet (Endo inventory tracker, updated 25 Oct 2026)'),
-    h('div', { class: 'note' }, 'Fills every clinic in one go: dental chair, X-ray unit and microscope with PPM dates (General) and each staff member\'s machines (Individual). Enter the fill code Claude gave you.'),
+    h('div', { class: 'note' }, 'Fills every clinic in one go and saves straight away: dental chair, X-ray unit and microscope with PPM dates (General) and each staff member\'s machines. Machines already listed are updated, never doubled. Enter the fill code Claude gave you.'),
     h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } }, code, fillBtn)), card.children[1]);
   file.addEventListener('change', async () => {
     out.textContent = '';
@@ -1425,7 +1425,7 @@ function importSheetCard() {
     catch (e) { out.textContent = ''; out.appendChild(h('div', { class: 'msg bad' }, 'Could not read this file. Save it as .xlsx and try again.')); return; }
     await showRows(rows);
   });
-  async function showRows(rows, allStaff) {
+  async function showRows(rows, allStaff, autoImport) {
     out.textContent = '';
     if (!rows.length) { out.appendChild(h('div', { class: 'msg bad' }, 'No machines found. The sheet needs a header row with Serial and Location/Clinic columns.')); return; }
     const active = new Set(S.ref.clinics.map((c) => Number(c.clinic_id)));
@@ -1482,11 +1482,13 @@ function importSheetCard() {
       go.disabled = true; go.textContent = 'Importing…';
       try {
         const r = await api('inventory', { method: 'POST', body: { action: 'import', rows: use.map(({ sheet, ...x }) => x) } });
-        toast(`Imported ${r.saved} machines.`); INV.data = null; render();
+        const here = use.filter((x) => x.clinic_id === INV.clinic).length;
+        toast(`Imported ${r.saved} machines into ${new Set(use.map((x) => x.clinic_id)).size} clinics${here ? ` (${here} in Clinic ${INV.clinic})` : ''}.`); INV.data = null; render();
       } catch (e) { toast(e.message); paint(); }
     });
     out.append(summary, h('div', null, go));
     paint();
+    if (autoImport && chosen().length) go.click();
   }
   return card;
 }
