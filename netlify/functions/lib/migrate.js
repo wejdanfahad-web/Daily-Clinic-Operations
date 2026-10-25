@@ -236,6 +236,21 @@ BEGIN
   COMMIT;
 END;`,
   },
+  {
+    id: '19_apex_locator_hook',
+    optional: true,
+    // CIC request (Oct 2026): add Apex Locator hook to the standard instrument list.
+    done: `SELECT COUNT(*) AS n FROM equipment_catalog WHERE UPPER(item_name) = 'APEX LOCATOR HOOK' AND item_kind = 'INSTRUMENT' AND list_status = 'STANDARD' AND is_active = 'Y'`,
+    run: `
+BEGIN
+  UPDATE equipment_catalog SET list_status = 'STANDARD', is_active = 'Y', item_name = 'Apex Locator hook', updated_at = SYSTIMESTAMP
+   WHERE UPPER(item_name) = 'APEX LOCATOR HOOK' AND item_kind = 'INSTRUMENT';
+  IF SQL%ROWCOUNT = 0 THEN
+    INSERT INTO equipment_catalog (item_name, item_kind, requires_ppm, list_status) VALUES ('Apex Locator hook', 'INSTRUMENT', 'N', 'STANDARD');
+  END IF;
+  COMMIT;
+END;`,
+  },
 ];
 
 let ready = null;

@@ -225,6 +225,11 @@
       "item_kind": "INSTRUMENT",
       "item_name": "Tofflemire Matrix",
       "requires_ppm": "N"
+    },
+    {
+      "item_kind": "INSTRUMENT",
+      "item_name": "Apex Locator hook",
+      "requires_ppm": "N"
     }
   ]
 }
