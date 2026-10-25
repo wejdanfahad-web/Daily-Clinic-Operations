@@ -304,6 +304,47 @@ BEGIN
   COMMIT;
 END;`,
   },
+  {
+    id: '22_merge_fahad_j_rename_fahd_s',
+    optional: true,
+    // CIC request (Oct 2026): Prof. Fahad J is Prof. Aljarbou (keep Prof. Aljarbou); Prof. Fahd S is renamed Prof. Alsalleeh.
+    // Timetable sessions and name aliases follow; past log rows stay as recorded.
+    done: `SELECT CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END AS n FROM doctors WHERE UPPER(display_name) IN ('PROF. FAHAD J', 'PROF. FAHD S') AND is_active = 'Y'`,
+    run: `
+DECLARE
+  PROCEDURE merge_into(p_old VARCHAR2, p_new VARCHAR2, p_alias VARCHAR2) IS
+    l_old NUMBER; l_new NUMBER;
+  BEGIN
+    SELECT MIN(doctor_id) INTO l_old FROM doctors WHERE UPPER(display_name) = UPPER(p_old);
+    SELECT MIN(doctor_id) INTO l_new FROM doctors WHERE UPPER(display_name) = UPPER(p_new);
+    IF l_new IS NULL AND l_old IS NOT NULL THEN
+      UPDATE doctors SET display_name = p_new, is_active = 'Y', category_code = 'FC', updated_at = SYSTIMESTAMP WHERE doctor_id = l_old;
+      l_new := l_old;
+    ELSIF l_new IS NULL THEN
+      INSERT INTO doctors (display_name, title, category_code) VALUES (p_new, 'PROF', 'FC') RETURNING doctor_id INTO l_new;
+    ELSE
+      UPDATE doctors SET is_active = 'Y', category_code = 'FC', updated_at = SYSTIMESTAMP WHERE doctor_id = l_new;
+      IF l_old IS NOT NULL THEN
+        UPDATE doctor_timetable t SET doctor_id = l_new
+         WHERE t.doctor_id = l_old
+           AND NOT EXISTS (SELECT 1 FROM doctor_timetable x WHERE x.doctor_id = l_new AND x.semester_id = t.semester_id
+                              AND x.weekday = t.weekday AND x.session_code = t.session_code AND NVL(x.clinic_id, 0) = NVL(t.clinic_id, 0));
+        DELETE FROM doctor_timetable WHERE doctor_id = l_old;
+        UPDATE doctor_aliases SET doctor_id = l_new WHERE doctor_id = l_old;
+        UPDATE doctors SET is_active = 'N', updated_at = SYSTIMESTAMP WHERE doctor_id = l_old;
+      END IF;
+    END IF;
+    UPDATE doctor_aliases SET doctor_id = l_new WHERE alias_norm = p_alias;
+    IF SQL%ROWCOUNT = 0 THEN
+      INSERT INTO doctor_aliases (alias_norm, doctor_id, created_by) VALUES (p_alias, l_new, 'CIC merge');
+    END IF;
+  END;
+BEGIN
+  merge_into('Prof. Fahad J', 'Prof. Aljarbou', 'fahad j');
+  merge_into('Prof. Fahd S', 'Prof. Alsalleeh', 'fahd s');
+  COMMIT;
+END;`,
+  },
 ];
 
 let ready = null;
