@@ -1395,7 +1395,7 @@ function importSheetCard() {
     h('summary', { style: { cursor: 'pointer', fontWeight: 600, fontSize: '16px' } }, 'Fill the inventory from Excel'));
   const file = h('input', { type: 'file', accept: '.xlsx', class: 'in', style: { padding: '8px' } });
   const out = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } });
-  card.append(h('div', { class: 'hint' }, 'Upload the Endo inventory tracker or the equipment master list (.xlsx). Each machine goes to the clinic in its Location/Clinic column; the Staff ID shows who reported it. Machines are matched by item and Serial #, so importing the same file again updates instead of duplicating. PPM dates are kept only for the dental chair, X-ray unit and microscope.'),
+  card.append(h('div', { class: 'hint' }, 'Upload the Endo inventory tracker or the equipment master list (.xlsx). Each machine goes to the clinic in its Location/Clinic column; the Staff ID shows who reported it. Machines are matched by item and Serial #, so importing again never doubles a machine. For machines already in the system the sheet only fills empty fields: PPM dates, status and changes made on the site are kept, and removed machines stay removed. PPM dates are kept only for the dental chair, X-ray unit and microscope.'),
     h('label', { class: 'f' }, 'Excel file', file), out);
   // The department sheet already sent to Claude ships encrypted with the site; the CIC's code unlocks it.
   const code = h('input', { class: 'in', maxlength: 20, placeholder: 'XXXX-XXXX-XXXX', 'aria-label': 'Fill code', style: { width: '200px', fontFamily: 'var(--mono)', textTransform: 'uppercase' } });

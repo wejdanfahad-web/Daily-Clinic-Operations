@@ -195,10 +195,10 @@ BEGIN
     BEGIN
       IF r.s IS NOT NULL THEN
         SELECT equipment_id INTO l_eq FROM equipment_ppm
-         WHERE item_id = l_item AND clinic_id = r.c AND UPPER(serial_no) = UPPER(r.s) AND condition_status <> 'RETIRED' AND ROWNUM = 1;
+         WHERE item_id = l_item AND clinic_id = r.c AND UPPER(serial_no) = UPPER(r.s) AND ROWNUM = 1;  -- removed ones count too, so they are not brought back
       ELSE
         SELECT equipment_id INTO l_eq FROM equipment_ppm
-         WHERE item_id = l_item AND clinic_id = r.c AND serial_no IS NULL AND condition_status <> 'RETIRED' AND ROWNUM = 1;
+         WHERE item_id = l_item AND clinic_id = r.c AND serial_no IS NULL AND ROWNUM = 1;
       END IF;
     EXCEPTION WHEN NO_DATA_FOUND THEN l_eq := NULL;
     END;
@@ -206,11 +206,12 @@ BEGIN
       INSERT INTO equipment_ppm (clinic_id, item_id, asset_tag, serial_no, quantity, condition_status, last_ppm_date, ppm_due_date, last_verified_by, responsible_staff_id, updated_by, notes)
       VALUES (r.c, l_item, r.t, r.s, 1, r.st, TO_DATE(r.lp, 'YYYY-MM-DD'), TO_DATE(r.due, 'YYYY-MM-DD'), r.by_staff, r.by_staff, :by, 'Imported from the inventory sheet');
     ELSE
+      -- already in the system: the sheet only fills blanks; what staff updated on the site stays
       UPDATE equipment_ppm
-         SET asset_tag = NVL(r.t, asset_tag), condition_status = r.st,
-             last_ppm_date = NVL(TO_DATE(r.lp, 'YYYY-MM-DD'), last_ppm_date),
-             ppm_due_date  = NVL(TO_DATE(r.due, 'YYYY-MM-DD'), ppm_due_date), last_verified_by = NVL(r.by_staff, last_verified_by),
-             responsible_staff_id = NVL(r.by_staff, responsible_staff_id), updated_by = :by
+         SET asset_tag = NVL(asset_tag, r.t),
+             last_ppm_date = NVL(last_ppm_date, TO_DATE(r.lp, 'YYYY-MM-DD')),
+             ppm_due_date  = NVL(ppm_due_date, TO_DATE(r.due, 'YYYY-MM-DD')),
+             responsible_staff_id = NVL(responsible_staff_id, r.by_staff)
        WHERE equipment_id = l_eq;
     END IF;
   END LOOP;
