@@ -241,7 +241,72 @@ function plannerChecks() {
       if (!docUse.has(Number(t.doctor_id))) issues.push({ sev: 'high', text: `${t.doctor_name} is in the timetable for the ${sess}${t.clinic_id ? ' (Clinic ' + t.clinic_id + ')' : ''} but has no assistant.`, doctor: t, sess });
     }
   }
+  for (const b of plannerBookings()) {
+    if (!surgeryInDraft(b)) issues.push({ sev: 'high', text: `Booked surgery (${b.session_code}): ${b.doctor_name} + ${b.assisting_doctor_name} is not in the plan${b.status === 'ASSIGNED' ? '. Publishing would take it off the board' : ''}.` });
+  }
   return issues;
+}
+
+// ---- surgery bookings for the planned day (from the doctors' booking form)
+function plannerBookings() {
+  return (P.bookings || []).filter((b) => b.work_date === P.date && b.status !== 'CANCELLED');
+}
+// the staff member who has this booking in the draft (same session, both doctors or the booking note), or null
+function surgeryInDraft(b) {
+  for (const [sid, d] of Object.entries(P.draft || {})) {
+    for (const e of (d[b.session_code] || [])) {
+      if (e.type_code !== 'SURGERY') continue;
+      const ids = (e.doctor_ids || []).map(Number);
+      if (e.notes === 'Booking #' + b.booking_id || (ids.includes(Number(b.doctor_id)) && ids.includes(Number(b.assisting_doctor_id)))) return Number(sid);
+    }
+  }
+  return null;
+}
+function plannerSurgeriesCard() {
+  const list = plannerBookings();
+  const card = cardSection(`Surgery bookings · ${fmtDay(P.date)}`);
+  if (P.bookingsError) { card.appendChild(h('div', { class: 'msg bad' }, P.bookingsError)); return card; }
+  if (!list.length) { card.appendChild(h('div', { class: 'note' }, 'No surgeries booked for this day.')); return card; }
+  const staffMap = refMaps().staff;
+  const queue = (P.queues || []).filter((q) => q.rotation_code === 'SURGERY' && q.is_eligible === 'Y').sort((a, b) => a.queue_position - b.queue_position);
+  const ul = h('ul', { class: 'plain', style: { gap: '8px' } });
+  for (const b of list) {
+    const inPlan = P.draft ? surgeryInDraft(b) : null;
+    const li = h('li', { class: 'booking' + (b.status === 'NEW' ? ' new' : '') },
+      h('div', { class: 'row-between' }, h('b', null, b.session_code),
+        inPlan ? h('span', { class: 'status done' }, 'In the plan') : b.status === 'ASSIGNED' ? h('span', { class: 'status' }, 'On the board') : h('span', { class: 'status new' }, 'Needs an assistant')),
+      h('div', { class: 'who2' },
+        h('span', { class: 'catchip', style: catStyle(b.doctor_category) }, catLabel(b.doctor_category)), b.doctor_name,
+        h('span', { class: 'note' }, '· assisted by'),
+        h('span', { class: 'catchip', style: catStyle(b.assisting_category) }, catLabel(b.assisting_category)), b.assisting_doctor_name),
+      b.supervisor_name ? h('div', { class: 'note' }, 'Case supervisor: ', h('b', { style: { color: '#17262B' } }, b.supervisor_name)) : null,
+      b.note ? h('div', { class: 'note' }, b.note) : null);
+    if (inPlan) li.appendChild(h('div', { style: { fontSize: '13px', color: '#1F5145' } }, 'Assistant in this plan: ', h('b', null, (staffMap[inPlan] || {}).display_name || '')));
+    else if (b.status === 'ASSIGNED') li.appendChild(h('div', { style: { fontSize: '13px' } }, 'On the board with ', h('b', null, b.assigned_staff || ''), P.draft ? h('span', { class: 'note' }, ' · not in this draft') : null));
+    if (!inPlan && P.draft) {
+      // next in line: skip anyone on leave or already in surgery in this session of the draft
+      const busy = (sid) => ((P.draft[sid] || {})[b.session_code] || []).some((e) => e.type_code === 'SURGERY' || (refMaps().types[e.type_code] || {}).category === 'UNAVAILABLE');
+      const cands = queue.filter((q) => !busy(q.staff_id));
+      const pick = h('select', { class: 'in', style: { height: '36px' }, 'aria-label': 'Assistant for this surgery' },
+        cands.map((q, i) => h('option', { value: q.staff_id }, `${q.staff_name} · ${q.total_count} surgeries${i === 0 ? ' (next in line)' : ''}`)));
+      li.appendChild(h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' } }, pick,
+        h('button', { type: 'button', class: 'btn primary small', disabled: !cands.length, onclick: () => {
+          const sid = Number(pick.value); if (!sid) return;
+          const st = staffMap[sid] || {};
+          P.draft[sid] = P.draft[sid] || { AM: [], PM: [] };
+          const cell = P.draft[sid][b.session_code] || [];
+          const freed = cell.filter((e) => (refMaps().types[e.type_code] || {}).category === 'CLINICAL').length;
+          P.draft[sid][b.session_code] = cell.filter((e) => (refMaps().types[e.type_code] || {}).category !== 'CLINICAL')
+            .concat([{ type_code: 'SURGERY', doctor_ids: [Number(b.doctor_id), Number(b.assisting_doctor_id)], clinic_id: Number(st.home_clinic_id) || null, notes: 'Booking #' + b.booking_id }]);
+          scheduleSave(); render();
+          toast(`${st.display_name} added to the surgery.${freed ? ' Her clinic doctor now needs an assistant (see Checks).' : ''}`);
+        } }, 'Add to plan')));
+      if (!cands.length) li.appendChild(h('div', { class: 'note' }, 'Nobody trained for surgery is free in this session.'));
+    } else if (!inPlan) li.appendChild(h('div', { class: 'note' }, 'Start a plan (Auto-plan or Start from board) to add it.'));
+    ul.appendChild(li);
+  }
+  card.appendChild(ul);
+  return card;
 }
 
 function scheduleSave() {
@@ -283,6 +348,11 @@ PAGES.planner = async function renderPlanner(app) {
   await loadRef();
   const date = (S.param && /^\d{4}-\d{2}-\d{2}$/.test(S.param) && S.tab === 'planner') ? S.param : (P.date || plannerDefaultDate());
   if (!P.data || P.date !== date) await loadPlanner(date);
+  if (!P.bookings || P.bookingsFor !== date) {
+    P.bookingsFor = date; P.bookingsError = null;
+    try { [P.bookings, P.queues] = await Promise.all([api('bookings?list=upcoming&t=' + Date.now()).then((r) => r.bookings), api('queues').then((r) => r.queues)]); }
+    catch (e) { P.bookings = []; P.queues = []; P.bookingsError = e.message; }
+  }
   const weekend = isWeekend(date);
   const setDate = (d) => { if (P.dirty) saveDraftNow(); history.replaceState(null, '', '#/planner/' + d); S.param = d; P.data = null; render(); };
 
@@ -314,7 +384,7 @@ PAGES.planner = async function renderPlanner(app) {
         const r = await api('planner', { method: 'POST', body: { action: 'publish', date, draft: P.draft } });
         P.dirty = false; try { localStorage.removeItem('plannerDraft:' + date); } catch { /* ignore */ }
         toast(r.changes ? `Published · ${r.changes} change(s) · staff notified` : 'Published · no changes from the board');
-        P.data = null; S.board = null; render();
+        P.data = null; S.board = null; P.bookings = null; S.bookings = null; render();
       } catch (err) { toast(err.message); e.target.disabled = false; }
     } }, 'Publish to board'));
   app.appendChild(toolbar);
@@ -402,6 +472,7 @@ PAGES.planner = async function renderPlanner(app) {
       h('div', { class: 'note' }, low.map((i) => i.text.replace(' has nothing in the ', ' ').replace(/\.$/, '')).join(', ')))));
     checks.appendChild(ul);
   }
+  side.appendChild(plannerSurgeriesCard());
   side.appendChild(checks);
   side.appendChild(leaveCard());
 }

@@ -180,6 +180,21 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
       COMMIT;
     END;`, { d: date, js: text, by });
 
+  // A surgery booking added in the planner ("Booking #id" on the row) now counts as assigned.
+  try {
+    await exec(`
+      BEGIN
+        UPDATE surgery_bookings b
+           SET status = 'ASSIGNED', seen_at = NVL(seen_at, SYSTIMESTAMP),
+               assignment_log_id = (SELECT MIN(v.log_id) FROM v_assignments_current v
+                                     WHERE v.work_date = b.work_date AND v.type_code = 'SURGERY' AND v.notes = 'Booking #' || b.booking_id)
+         WHERE b.work_date = TO_DATE(:d, 'YYYY-MM-DD') AND b.status IN ('NEW', 'SEEN')
+           AND EXISTS (SELECT 1 FROM v_assignments_current v
+                        WHERE v.work_date = b.work_date AND v.type_code = 'SURGERY' AND v.notes = 'Booking #' || b.booking_id);
+        COMMIT;
+      END;`, { d: date });
+  } catch (e) { console.error('booking link', e.message); }
+
   // One notification per staff member whose day changed.
   const notified = [];
   const dayLabel = new Date(date + 'T12:00:00Z').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
