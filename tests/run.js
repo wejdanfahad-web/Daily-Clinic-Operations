@@ -271,6 +271,14 @@ function ev(method, { body, query, cookie } = {}) {
     assert.strictEqual(blk.binds.find((b) => b.name === 'qty').value, 6);
   });
 
+  await t('inventory: Endo Activator needs no Serial #', async () => {
+    responder = (sql) => /AS n FROM dual/.test(sql) ? rows([{ N: 1 }]) : /SELECT item_name FROM equipment_catalog/.test(sql) ? rows([{ ITEM_NAME: 'Endo Activator' }]) : /requires_ppm FROM equipment_catalog/.test(sql) ? rows([{ REQUIRES_PPM: 'N' }]) : done();
+    let r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'add', clinic_id: 9, item_kind: 'MACHINE', item_name: 'Endo Activator' } }));
+    assert.strictEqual(r.statusCode, 200, r.body);
+    r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'add', clinic_id: 9, item_kind: 'MACHINE', item_id: 7 } }));
+    assert.strictEqual(r.statusCode, 200, r.body);
+  });
+
   await t('inventory: staff cannot edit another clinic', async () => {
     responder = () => rows([{ N: 0 }]);
     const r = await F('inventory')(ev('POST', { cookie: staff, body: { action: 'add', clinic_id: 3, item_kind: 'INSTRUMENT', item_name: 'DG16', quantity: 1 } }));

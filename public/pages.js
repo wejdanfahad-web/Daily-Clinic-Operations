@@ -1042,6 +1042,9 @@ PAGES.workload = async function renderWorkload(app) {
 // CLINIC INVENTORY
 // =====================================================================================
 const INV = { clinic: null, data: null };
+// Machines that have no serial number (CIC, Nov 2026): Serial # is optional for these.
+const NO_SERIAL = /^\s*endo\s*activator\s*$/i;
+const needsSerial = (name) => !NO_SERIAL.test(String(name || ''));
 const PPM_LABEL = { OVERDUE: ['PPM overdue', 'new'], DUE_7_DAYS: ['Due within 7 days', 'new'], DUE_30_DAYS: ['Due within 30 days', ''], MISSING_DATE: ['PPM date missing', 'new'], OK: ['PPM OK', 'done'], NOT_REQUIRED: ['', ''] };
 
 PAGES.inventory = async function renderInventory(app) {
@@ -1087,7 +1090,7 @@ PAGES.inventory = async function renderInventory(app) {
       const cells = [];
       if (hasM && hasI) cells.push(h('td', null, h('span', { class: 'status' }, machine ? 'Machine' : 'Instrument')));
       cells.push(h('td', { class: 'name' }, it.item_name, it.list_status === 'PENDING' ? h('span', { class: 'status new', style: { marginLeft: '6px' }, title: 'Typed under Other… — waiting for the CIC' }, 'new name') : null));
-      if (hasM) cells.push(h('td', { style: { fontFamily: 'var(--mono)', fontSize: '12px' } }, !machine ? '' : it.serial_no ? it.serial_no : h('span', { class: 'status new', style: { fontFamily: 'inherit' } }, 'Serial missing')));
+      if (hasM) cells.push(h('td', { style: { fontFamily: 'var(--mono)', fontSize: '12px' } }, !machine ? '' : it.serial_no ? it.serial_no : !needsSerial(it.item_name) ? h('span', { class: 'note' }, 'No serial') : h('span', { class: 'status new', style: { fontFamily: 'inherit' } }, 'Serial missing')));
       if (hasI) cells.push(h('td', { class: 'score' }, machine ? '' : Number(it.quantity) > 0 ? it.quantity : h('span', { class: 'status new' }, 'Quantity missing')));
       if (hasP) {
         cells.push(h('td', null, it.requires_ppm !== 'Y' ? '' : it.last_ppm_date ? fmtDay(it.last_ppm_date) + ' ' + it.last_ppm_date.slice(0, 4) : '—'));
@@ -1114,7 +1117,7 @@ PAGES.inventory = async function renderInventory(app) {
   const myInstruments = individual.filter((it) => it.item_kind !== 'MACHINE');
   app.appendChild(h('section', { class: 'card', style: { overflow: 'hidden' }, 'aria-label': 'Individual machines' },
     h('div', { class: 'card-head' }, h('h2', null, `Clinic ${INV.clinic} · Machines`),
-      h('span', { class: 'note' }, `${count(myMachines.length, 'machine')}${missing(myMachines, (it) => !it.serial_no, 'without Serial #')} · ${canNote}`)),
+      h('span', { class: 'note' }, `${count(myMachines.length, 'machine')}${missing(myMachines, (it) => !it.serial_no && needsSerial(it.item_name), 'without Serial #')} · ${canNote}`)),
     myMachines.length ? itemTable(myMachines, editable) : h('div', { class: 'loading' }, 'No machines listed yet. Add them below.')));
   app.appendChild(h('section', { class: 'card', style: { overflow: 'hidden' }, 'aria-label': 'Individual instruments' },
     h('div', { class: 'card-head' }, h('h2', null, `Clinic ${INV.clinic} · Instruments`),
@@ -1137,6 +1140,10 @@ function addItemCard(catalog) {
   const other = h('input', { class: 'in', maxlength: 120, placeholder: 'Type the item name' });
   const otherLabel = h('label', { class: 'f' }, 'Item name (not in the list — the CIC will check it)', other);
   const serial = h('input', { class: 'in', maxlength: 60, placeholder: 'Required for machines' });
+  const serialLbl = h('span', null, 'Serial # *');
+  const pickedName = () => { const c = catalog.find((x) => String(x.item_id) === pick.value); return c ? c.item_name : pick.value === 'OTHER' ? other.value : ''; };
+  other.addEventListener('input', () => syncSerial());
+  const syncSerial = () => { const req = needsSerial(pickedName()); serialLbl.textContent = req ? 'Serial # *' : 'Serial # (none for this machine)'; serial.placeholder = req ? 'Required for machines' : 'Optional'; };
   const tag = h('input', { class: 'in', maxlength: 40, placeholder: 'Optional' });
   const last = h('input', { class: 'in', type: 'date', max: TODAY() });
   const interval = h('select', { class: 'in' }, h('option', { value: '' }, 'Not set'), [3, 6, 12, 24].map((m) => h('option', { value: m }, `Every ${m} months`)));
@@ -1148,7 +1155,7 @@ function addItemCard(catalog) {
     h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Last PPM date', last), h('label', { class: 'f' }, 'PPM interval', interval)),
     h('label', { class: 'f' }, 'Next PPM due (if not using the interval)', due));
   const machineOnly = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-    h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Serial # *', serial), h('label', { class: 'f' }, 'Asset tag / DUH #', tag)),
+    h('div', { class: 'grid2' }, h('label', { class: 'f' }, serialLbl, serial), h('label', { class: 'f' }, 'Asset tag / DUH #', tag)),
     otherPpmLabel, ppmBox);
   const needsPpm = () => {
     if (kind !== 'MACHINE') return false;
@@ -1200,7 +1207,7 @@ function addItemCard(catalog) {
     if (pick.value === 'OTHER') other.focus();
     const c = catalog.find((x) => String(x.item_id) === pick.value);
     if (c && c.ppm_interval_months) interval.value = c.ppm_interval_months;
-    syncPpm();
+    syncPpm(); syncSerial();
   });
   const segBtns = [['MACHINE', 'Machine'], ['INSTRUMENT', 'Instrument']].map(([k, l]) => h('button', { type: 'button', 'aria-pressed': k === kind ? 'true' : 'false', onclick: () => {
     kind = k; segBtns.forEach((b, i) => b.setAttribute('aria-pressed', ['MACHINE', 'INSTRUMENT'][i] === k ? 'true' : 'false'));
@@ -1233,7 +1240,7 @@ function addItemCard(catalog) {
     }
     if (!pick.value) return show('Choose the item from the list (or Other…).', pick);
     if (pick.value === 'OTHER' && !other.value.trim()) return show('Type the item name.', other);
-    if (kind === 'MACHINE' && !serial.value.trim()) return show('Serial # is required for a machine.', serial);
+    if (kind === 'MACHINE' && !serial.value.trim() && needsSerial(pickedName())) return show('Serial # is required for a machine.', serial);
     const item = pick.value === 'OTHER' ? { item_name: other.value } : { item_id: Number(pick.value) };
     save.disabled = true;
     try {
@@ -1334,13 +1341,13 @@ function editItem(it, ppmOnly = false) {
     }
     body.append(h('h3', null, `${it.item_name} · Clinic ${it.clinic_id}`),
       it.responsible_name ? h('div', { class: 'note' }, 'Responsible: ', h('b', { style: { color: '#17262B' } }, it.responsible_name)) : null,
-      machine ? h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Serial # *', serial), h('label', { class: 'f' }, 'Asset tag', tag)) : h('label', { class: 'f' }, 'Quantity *', qty),
+      machine ? h('div', { class: 'grid2' }, h('label', { class: 'f' }, needsSerial(it.item_name) ? 'Serial # *' : 'Serial # (optional)', serial), h('label', { class: 'f' }, 'Asset tag', tag)) : h('label', { class: 'f' }, 'Quantity *', qty),
       ppm ? h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Last PPM date', last), h('label', { class: 'f' }, 'Next PPM due', due)) : null,
       ppm ? h('div', { class: 'hint' }, 'Change the last PPM date and leave "next due" as it is: the due date is recalculated from the interval when one is set.') : null,
       h('label', { class: 'f' }, 'Status', status), h('label', { class: 'f' }, 'Notes', notes), err,
       h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn', onclick: close }, 'Cancel'),
         h('button', { type: 'button', class: 'btn dark', onclick: async () => {
-          if (machine && !serial.value.trim()) { err.textContent = 'Serial # is required for a machine.'; err.hidden = false; return; }
+          if (machine && !serial.value.trim() && needsSerial(it.item_name)) { err.textContent = 'Serial # is required for a machine.'; err.hidden = false; return; }
           const bodyData = { action: 'update', equipment_id: it.equipment_id, condition_status: status.value, notes: notes.value };
           if (machine) {
             bodyData.serial_no = serial.value; bodyData.asset_tag = tag.value;

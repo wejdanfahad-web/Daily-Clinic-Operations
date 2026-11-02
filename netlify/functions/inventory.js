@@ -29,6 +29,8 @@ const { ensureSchema } = require('./lib/migrate');
 
 const KINDS = ['MACHINE', 'INSTRUMENT'];
 const STATUSES = ['IN_SERVICE', 'OUT_OF_SERVICE', 'UNDER_REPAIR', 'RETIRED'];
+// Machines that have no serial number (CIC, Nov 2026): Serial # is optional for these.
+const needsSerial = (name) => !/^\s*endo\s*activator\s*$/i.test(String(name || ''));
 const optDate = (v, label) => {
   if (v === undefined || v === null || v === '') return null;
   if (!isIsoDate(v)) throw new HttpError(400, `${label} must be a valid date.`);
@@ -279,7 +281,10 @@ END;`, { js: JSON.stringify(items), cid, resp, sid: user.sid, by, notes: clean(b
     if (!cid) throw new HttpError(400, 'Choose the clinic.');
     if (!KINDS.includes(kind)) throw new HttpError(400, 'Choose Machine or Instrument.');
     if (!listId && !name) throw new HttpError(400, 'Choose the item from the list, or pick "Other…" and type its name.');
-    if (kind === 'MACHINE' && !serial) throw new HttpError(400, 'Serial # is required for a machine.');
+    if (kind === 'MACHINE' && !serial) {
+      const it = listId ? await one(`SELECT item_name FROM equipment_catalog WHERE item_id = :id`, { id: listId }) : { item_name: name };
+      if (needsSerial(it && it.item_name)) throw new HttpError(400, 'Serial # is required for a machine.');
+    }
     const qty = kind === 'MACHINE' ? 1 : (b.quantity === '' || b.quantity === null || b.quantity === undefined ? NaN : Number(b.quantity));
     if (!Number.isInteger(qty) || qty < (kind === 'MACHINE' ? 0 : 1) || qty > 9999) throw new HttpError(400, 'The quantity is required (1 or more).');
     const interval = b.ppm_interval_months ? Number(b.ppm_interval_months) : null;
@@ -332,7 +337,7 @@ END;`, {
 
   const id = Number(b.equipment_id);
   if (!id) throw new HttpError(400, 'equipment_id is required.');
-  const row = await one(`SELECT e.clinic_id, i.item_kind, i.requires_ppm, e.responsible_staff_id FROM equipment_ppm e JOIN equipment_catalog i ON i.item_id = e.item_id WHERE e.equipment_id = :id`, { id });
+  const row = await one(`SELECT e.clinic_id, i.item_kind, i.item_name, i.requires_ppm, e.responsible_staff_id FROM equipment_ppm e JOIN equipment_catalog i ON i.item_id = e.item_id WHERE e.equipment_id = :id`, { id });
   if (!row) throw new HttpError(404, 'Item not found.');
   if (!(await canEditClinic(user, Number(row.clinic_id)))) throw new HttpError(403, 'You can only update the inventory of your own clinic or the clinic you work in today.');
   // General machines (dental chair, X-ray unit, microscope: the items with a PPM due date): staff of
@@ -351,7 +356,7 @@ END;`, {
     const status = b.condition_status ? String(b.condition_status).toUpperCase() : null;
     if (status && !STATUSES.includes(status)) throw new HttpError(400, 'Unknown status.');
     const serial = row.item_kind !== 'MACHINE' || b.serial_no === undefined ? undefined : clean(b.serial_no, 60);
-    if (row.item_kind === 'MACHINE' && serial === null) throw new HttpError(400, 'Serial # is required for a machine.');
+    if (row.item_kind === 'MACHINE' && serial === null && needsSerial(row.item_name)) throw new HttpError(400, 'Serial # is required for a machine.');
     let qty = b.quantity === undefined || b.quantity === '' ? null : Number(b.quantity);
     if (qty !== null && (!Number.isInteger(qty) || qty < 0 || qty > 9999)) throw new HttpError(400, 'Enter a quantity (0 or more).');
     if (row.item_kind === 'INSTRUMENT' && b.quantity !== undefined && !(qty >= 1) && (status || 'IN_SERVICE') !== 'RETIRED') throw new HttpError(400, 'The quantity is required (1 or more).');

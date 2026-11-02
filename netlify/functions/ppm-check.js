@@ -46,7 +46,7 @@ exports.handler = async () => {
            LISTAGG(e.equipment_id, ',') WITHIN GROUP (ORDER BY e.equipment_id) AS ids
       FROM equipment_ppm e JOIN equipment_catalog i ON i.item_id = e.item_id
      WHERE e.condition_status <> 'RETIRED' AND e.responsible_staff_id IS NOT NULL
-       AND ((i.item_kind = 'INSTRUMENT' AND NVL(e.quantity, 0) = 0) OR (i.item_kind = 'MACHINE' AND TRIM(e.serial_no) IS NULL))
+       AND ((i.item_kind = 'INSTRUMENT' AND NVL(e.quantity, 0) = 0) OR (i.item_kind = 'MACHINE' AND TRIM(e.serial_no) IS NULL AND UPPER(TRIM(i.item_name)) <> 'ENDO ACTIVATOR'))
      GROUP BY e.responsible_staff_id, e.clinic_id`);
   for (const q of noQty) {
     const n = Number(q.n), m = Number(q.m);
