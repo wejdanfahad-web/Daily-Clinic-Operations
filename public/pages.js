@@ -288,7 +288,7 @@ function plannerSurgeriesCard() {
       const busy = (sid) => ((P.draft[sid] || {})[b.session_code] || []).some((e) => e.type_code === 'SURGERY' || (refMaps().types[e.type_code] || {}).category === 'UNAVAILABLE');
       const cands = queue.filter((q) => !busy(q.staff_id));
       const pick = h('select', { class: 'in', style: { height: '36px' }, 'aria-label': 'Assistant for this surgery' },
-        cands.map((q, i) => h('option', { value: q.staff_id }, `${q.staff_name} · ${q.total_count} surgeries${i === 0 ? ' (next in line)' : ''}`)));
+        cands.map((q, i) => h('option', { value: q.staff_id }, `${q.staff_name} · ${q.total_count} surgeries · last ${q.last_assigned_date ? fmtDay(q.last_assigned_date) : '—'}${i === 0 ? ' (next in line)' : ''}`)));
       li.appendChild(h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' } }, pick,
         h('button', { type: 'button', class: 'btn primary small', disabled: !cands.length, onclick: () => {
           const sid = Number(pick.value); if (!sid) return;

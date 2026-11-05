@@ -1002,7 +1002,7 @@ async function upcomingSurgeriesCard() {
       busy = new Set(day.assignments.filter((a) => (a.session_code === b.session_code || a.session_code === 'DAY') && (a.category === 'UNAVAILABLE' || a.type_code === 'SURGERY')).map((a) => Number(a.staff_id)));
     } catch { /* show queue order without the skip */ }
     const candidates = queue.filter((q) => !busy.has(Number(q.staff_id)));
-    const pick = h('select', { class: 'in', style: { height: '36px' } }, candidates.map((q, i) => h('option', { value: q.staff_id }, `${q.staff_name} · ${q.total_count} surgeries${i === 0 ? ' (next in line)' : ''}`)));
+    const pick = h('select', { class: 'in', style: { height: '36px' } }, candidates.map((q, i) => h('option', { value: q.staff_id }, `${q.staff_name} · ${q.total_count} surgeries · last ${q.last_assigned_date ? fmtDay(q.last_assigned_date) : '—'}${i === 0 ? ' (next in line)' : ''}`)));
     const staffById = refMaps().staff;
     const clinicPick = h('select', { class: 'in', style: { height: '36px' }, 'aria-label': 'Surgery clinic' },
       S.ref.clinics.map((c) => h('option', { value: c.clinic_id }, c.clinic_name)));
@@ -1035,7 +1035,7 @@ async function upcomingSurgeriesCard() {
     ul.appendChild(li);
   }
   card.appendChild(ul);
-  card.appendChild(h('div', { class: 'hint' }, 'Order: fewest surgeries → longest since last → A–Z. Staff not available or already in surgery that session are skipped. Not-yet-trained staff are never listed.'));
+  card.appendChild(h('div', { class: 'hint' }, 'Rotation: whoever had a surgery longest ago (or none yet) is next; fewer surgeries breaks a tie. Staff not available or already in surgery that session are skipped. Not-yet-trained staff are never listed.'));
   return card;
 }
 

@@ -2,7 +2,7 @@
 //   Instruments — 1 dental assistant AM (8:40) + 1 PM (12:40). Skips anyone not available that
 //                 session or on Vitals in that same session; the skipped person keeps her place.
 //   Crash cart  — 2 staff nurses before 8:30. Vitals allowed. The CIC fills a gap.
-// The queue order comes from V_ROTATION_QUEUE (fewest turns → longest since last → A–Z), so the
+// The queue order comes from V_ROTATION_QUEUE (duties: fewest turns → longest since last → A–Z), so the
 // rotation only moves when a duty is actually recorded in ASSIGNMENT_LOGS.
 const { query } = require('./db');
 const { writeEntries } = require('./assignments');
@@ -10,6 +10,7 @@ const { writeEntries } = require('./assignments');
 const DUTY_TYPES = ['INSTRUMENTS', 'CRASH_CART'];
 
 async function loadDay(date) {
+  await require('./migrate').ensureSchema();
   const [queue, board, cic] = await Promise.all([
     query(`
       SELECT rotation_code, staff_id, staff_name, total_count, queue_position

@@ -385,6 +385,74 @@ BEGIN
   COMMIT;
 END;`,
   },
+  {
+    id: '24_surgery_rotation_by_date',
+    optional: true,
+    // CIC request (Nov 2026): the surgery queue is a rotation: whoever had a surgery longest ago
+    // (or none yet) is next; the number of surgeries only breaks ties. Other rotations unchanged.
+    done: `SELECT COUNT(*) AS n FROM user_tab_comments WHERE table_name = 'V_ROTATION_QUEUE' AND comments LIKE '%[rot24]%'`,
+    run: `
+BEGIN
+  EXECUTE IMMEDIATE q'[
+CREATE OR REPLACE VIEW v_rotation_queue AS
+WITH ev AS (
+  SELECT e.staff_id, e.rotation_code,
+         COUNT(*)         AS logged_count,
+         MAX(e.work_date) AS logged_last_date
+    FROM v_rotation_events e
+    LEFT JOIN rotation_baseline b
+           ON b.staff_id = e.staff_id AND b.rotation_code = e.rotation_code
+   WHERE b.as_of_date IS NULL OR e.work_date > b.as_of_date   -- no double counting
+   GROUP BY e.staff_id, e.rotation_code
+),
+base AS (
+  SELECT s.staff_id,
+         s.display_name                                    AS staff_name,
+         s.home_clinic_id,
+         s.employment_status,
+         r.rotation_code,
+         r.rotation_name,
+         NVL(b.opening_count, 0) + NVL(ev.logged_count, 0) AS total_count,
+         CASE
+           WHEN b.opening_last_date IS NULL THEN ev.logged_last_date
+           WHEN ev.logged_last_date IS NULL THEN b.opening_last_date
+           ELSE GREATEST(b.opening_last_date, ev.logged_last_date)
+         END                                               AS last_assigned_date,
+         CASE
+           WHEN s.employment_status = 'ACTIVE' AND NVL(el.is_eligible, 'Y') = 'Y'
+                AND (r.eligible_staff_type IS NULL OR r.eligible_staff_type = s.staff_type) THEN 'Y'
+           ELSE 'N'
+         END                                               AS is_eligible,
+         CASE
+           WHEN s.employment_status <> 'ACTIVE' THEN s.employment_status
+           WHEN el.is_eligible = 'N'            THEN NVL(el.reason, 'EXCLUDED')
+           WHEN r.eligible_staff_type IS NOT NULL AND r.eligible_staff_type <> s.staff_type
+                                                THEN 'Not a ' || LOWER(REPLACE(r.eligible_staff_type, '_', ' '))
+         END                                               AS ineligible_reason
+    FROM staff s
+   CROSS JOIN rotations r
+    LEFT JOIN rotation_baseline b
+           ON b.staff_id = s.staff_id AND b.rotation_code = r.rotation_code
+    LEFT JOIN ev
+           ON ev.staff_id = s.staff_id AND ev.rotation_code = r.rotation_code
+    LEFT JOIN staff_rotation_eligibility el
+           ON el.staff_id = s.staff_id AND el.rotation_code = r.rotation_code
+   WHERE r.is_active = 'Y'
+     AND s.employment_status <> 'INACTIVE'
+)
+SELECT base.*,
+       CASE WHEN is_eligible = 'Y' THEN
+         ROW_NUMBER() OVER (PARTITION BY rotation_code, is_eligible
+                            ORDER BY CASE WHEN rotation_code = 'SURGERY' THEN 0 ELSE total_count END ASC,
+                                     last_assigned_date ASC NULLS FIRST,
+                                     total_count ASC,
+                                     UPPER(staff_name) ASC)
+       END AS queue_position
+  FROM base
+]';
+  EXECUTE IMMEDIATE q'[COMMENT ON TABLE v_rotation_queue IS 'Rotation queues; surgery ordered by last surgery date [rot24]']';
+END;`,
+  },
 ];
 
 let ready = null;

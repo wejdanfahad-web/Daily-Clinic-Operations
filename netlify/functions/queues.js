@@ -2,9 +2,11 @@
 // Signed-in staff and the CIC.
 const { query } = require('./lib/db');
 const { handler, json, requireUser } = require('./lib/http');
+const { ensureSchema } = require('./lib/migrate');
 
 exports.handler = handler(['GET'], async (event) => {
   requireUser(event);
+  await ensureSchema();
   const rows = await query(`
     SELECT rotation_code, rotation_name, staff_id, staff_name, total_count,
            TO_CHAR(last_assigned_date, 'YYYY-MM-DD') AS last_assigned_date,
