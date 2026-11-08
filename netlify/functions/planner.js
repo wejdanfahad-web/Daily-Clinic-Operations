@@ -201,6 +201,11 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
   for (const sid of changedStaff) {
     const d = draft[sid] || {};
     const describe = (sess) => (d[sess] || []).map((e) => typeMap[e.type_code] ? typeMap[e.type_code].type_name.replace(' (with doctor)', '') + (e.clinic_id ? ' Cl ' + e.clinic_id : '') : e.type_code).join(', ') || '—';
+    // publishing the same day again replaces her waiting message: she gets one, with the latest schedule
+    try {
+      await exec(`BEGIN UPDATE notification_log SET status = 'FAILED', error_message = 'Replaced by a newer publish'
+                   WHERE status = 'PENDING' AND staff_id = :s AND dedupe_key LIKE :k; COMMIT; END;`, { s: Number(sid), k: `PUB:${date}:${sid}:%` });
+    } catch (e) { console.error('replace pending', e.message); }
     const r = await notifyStaff(sid, {
       eventType: 'SCHEDULE_CHANGE', title: `Your schedule today (${dayLabel})`,
       body: `AM: ${describe('AM')} · PM: ${describe('PM')}`, url: `/#/assign/${date}`,
