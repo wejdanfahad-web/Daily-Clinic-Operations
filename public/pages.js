@@ -125,6 +125,11 @@ function leaveOn(date, staffId) {
 const LOAD = { PG1: 0.5, BD1: 0.5, PG2: 0.75, BD2: 0.75 };
 const loadOf = (docId) => LOAD[(refMaps().docs[docId] || {}).category_code] ?? 1;
 
+// doctor → his fixed assistants' staff ids, in list order
+function fixedFor(docId) {
+  return (P.data.fixed || []).filter((f) => Number(f.doctor_id) === Number(docId) && f.staff_id).map((f) => Number(f.staff_id));
+}
+
 function autoPlan() {
   const date = P.date;
   const { docs } = refMaps();
@@ -145,8 +150,21 @@ function autoPlan() {
     const place = (s, docId, clinicId) => draft[s.staff_id][sess].push({ type_code: 'CLINIC', doctor_ids: [Number(docId)], clinic_id: Number(clinicId) || Number(s.home_clinic_id) || null, notes: '' });
     const present = P.data.timetable.filter((x) => x.session_code === sess);
     const placed = new Set();
+    // 0) doctors with a fixed assistant get her first (the next one on the list if she is away or busy)
+    const withDoc = (d) => assistants.filter((s) => draft[s.staff_id][sess].some((e) => (e.doctor_ids || []).map(Number).includes(Number(d)))).length;
+    const rank = (d) => { const i = (P.data.fixed || []).findIndex((f) => Number(f.doctor_id) === Number(d)); return i < 0 ? 1e9 : i; };
+    // one assistant per timetable row (so Prof. Ahmed's two clinics each get one), then any extra he is allowed
+    const ordered = [...present].sort((a, b) => rank(a.doctor_id) - rank(b.doctor_id));
+    for (const pass of [1, 2]) {
+      for (const t of ordered) {
+        const max = Number((docs[t.doctor_id] || {}).max_assistants || 1);
+        if (withDoc(t.doctor_id) >= max) continue;
+        const s = fixedFor(t.doctor_id).map((sid) => free().find((x) => Number(x.staff_id) === sid)).find(Boolean);
+        if (s && (pass === 1 || !ordered.some((o) => o !== t && Number(o.doctor_id) === Number(t.doctor_id)))) { place(s, t.doctor_id, t.clinic_id); placed.add(Number(t.doctor_id)); }
+      }
+    }
     // 1) timetable rows that name a clinic → the assistant whose home clinic it is
-    for (const t of present.filter((x) => x.clinic_id)) {
+    for (const t of present.filter((x) => x.clinic_id && !placed.has(Number(x.doctor_id)))) {
       const home = free().find((s) => Number(s.home_clinic_id) === Number(t.clinic_id));
       if (home) { place(home, t.doctor_id, t.clinic_id); placed.add(Number(t.doctor_id)); }
     }
@@ -172,7 +190,7 @@ function autoPlan() {
     // 4) doctors allowed 2 assistants (Prof. Ahmed) get a second one if someone is still free
     for (const t of present) {
       const doc = docs[t.doctor_id];
-      if (doc && Number(doc.max_assistants) > 1 && placed.has(Number(t.doctor_id))) {
+      if (doc && Number(doc.max_assistants) > 1 && placed.has(Number(t.doctor_id)) && withDoc(t.doctor_id) < Number(doc.max_assistants)) {
         const s = free()[0];
         if (s) place(s, t.doctor_id, null);
       }
@@ -241,6 +259,17 @@ function plannerChecks() {
       if (!docUse.has(Number(t.doctor_id))) issues.push({ sev: 'high', text: `${t.doctor_name} is in the timetable for the ${sess}${t.clinic_id ? ' (Clinic ' + t.clinic_id + ')' : ''} but has no assistant.`, doctor: t, sess });
     }
   }
+  for (const sess of ['AM', 'PM']) {
+    for (const t of (P.data.timetable || []).filter((x) => x.session_code === sess)) {
+      const fixed = fixedFor(t.doctor_id);
+      if (!fixed.length) continue;
+      const withHim = fixed.filter((sid) => ((draft[sid] || {})[sess] || []).some((e) => (e.doctor_ids || []).map(Number).includes(Number(t.doctor_id))));
+      if (withHim.length) continue;
+      const idle = fixed.find((sid) => { const c = ((draft[sid] || {})[sess] || []); return !c.some((e) => (types[e.type_code] || {}).category === 'UNAVAILABLE'); });
+      if (idle && Object.values(draft).some((d) => (d[sess] || []).some((e) => (e.doctor_ids || []).map(Number).includes(Number(t.doctor_id)))))
+        issues.push({ sev: 'low', text: `${t.doctor_name} (${sess}) is not with his usual assistant (${(staffMap[idle] || {}).display_name}).` });
+    }
+  }
   for (const b of plannerBookings()) {
     if (!surgeryInDraft(b)) issues.push({ sev: 'high', text: `Booked surgery (${b.session_code}): ${b.doctor_name} + ${b.assisting_doctor_name} is not in the plan${b.status === 'ASSIGNED' ? '. Publishing would take it off the board' : ''}.` });
   }
@@ -307,6 +336,33 @@ function plannerSurgeriesCard() {
   }
   card.appendChild(ul);
   return card;
+}
+
+// ---- fixed assistants (doctor always with the same assistant); auto-plan uses them first
+function fixedAssistantsCard() {
+  const rows = P.data.fixed || [];
+  const box = h('details', { class: 'card' });
+  box.appendChild(h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, `Fixed assistants (${rows.length})`));
+  const byStaff = new Map();
+  for (const f of rows) { if (!byStaff.has(f.staff_name)) byStaff.set(f.staff_name, []); byStaff.get(f.staff_name).push(f); }
+  const ul = h('ul', { class: 'plain', style: { marginTop: '8px', fontSize: '13px' } });
+  for (const [name, list] of byStaff) {
+    ul.appendChild(h('li', null, h('b', null, name), !list[0].staff_id ? h('span', { class: 'status new', style: { marginLeft: '6px' } }, 'staff not found') : null, ' ',
+      ...list.map((f) => h('span', { class: 'chip', style: { display: 'inline-flex', gap: '4px', alignItems: 'center', margin: '2px 4px 2px 0' } },
+        f.doctor_name, !f.doctor_id ? h('span', { class: 'status new' }, 'not found') : null,
+        h('button', { type: 'button', class: 'linkbtn', 'aria-label': `Remove ${f.doctor_name} from ${name}`, onclick: async () => {
+          try { P.data.fixed = (await api('planner', { method: 'POST', body: { action: 'fixed_remove', fixed_id: f.fixed_id } })).fixed; render(); } catch (e) { toast(e.message); }
+        } }, '×')))));
+  }
+  box.appendChild(ul);
+  const who = h('select', { class: 'in', 'aria-label': 'Assistant' }, S.ref.staff.filter((s) => s.employment_status === 'ACTIVE' && s.staff_type === 'DENTAL_ASSISTANT').map((s) => h('option', { value: s.staff_id }, s.display_name)));
+  const doc = h('select', { class: 'in', 'aria-label': 'Doctor' }, S.ref.doctors.filter((d) => ['FC', 'SP'].includes(d.category_code)).map((d) => h('option', { value: d.doctor_id }, `${d.display_name} · ${d.category_code}`)));
+  box.appendChild(h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' } }, who, doc,
+    h('button', { type: 'button', class: 'btn small', onclick: async () => {
+      try { P.data.fixed = (await api('planner', { method: 'POST', body: { action: 'fixed_add', staff_id: Number(who.value), doctor_id: Number(doc.value) } })).fixed; box.open = true; render(); } catch (e) { toast(e.message); }
+    } }, 'Add')));
+  box.appendChild(h('div', { class: 'note', style: { marginTop: '6px' } }, 'Auto-plan gives these doctors their assistant first. If a doctor has two, the first one listed is tried first. If she is on leave, he is planned as usual.'));
+  return box;
 }
 
 function scheduleSave() {
@@ -475,6 +531,7 @@ PAGES.planner = async function renderPlanner(app) {
   side.appendChild(plannerSurgeriesCard());
   side.appendChild(checks);
   side.appendChild(leaveCard());
+  side.appendChild(fixedAssistantsCard());
 }
 
 function moveEntry(fromId, sess, entry, toId) {

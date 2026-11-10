@@ -65,6 +65,8 @@ const timetable = [['Prof. Ahmed', 0, 'AM', 2], ['Prof. Ahmed', 0, 'AM', 3], ['D
 const aliases = [];
 for (const m of require('fs').readFileSync(path.join(__dirname, '..', 'db', '06_timetable_presence.sql'), 'utf8').matchAll(/SELECT '([^']+)', doctor_id, 'seed' FROM doctors WHERE display_name = '([^']+)'/g)) aliases.push({ alias_norm: m[1], doctor_id: DID(m[2]) });
 const drafts = {};
+let fixedRows = [['Saada', 'Dr. Alaa'], ['Haifa', 'Prof. Ahmed'], ['Shouq', 'Prof. Ahmed'], ['Rhoda', 'Dr. Nobody']].map(([staff_name, doctor_name], i) => ({ fixed_id: i + 1, staff_name, doctor_name }));
+const fixedOut = () => fixedRows.map((f) => ({ ...f, staff_id: (staff.find((x) => x.display_name === f.staff_name) || {}).staff_id || null, doctor_id: (doctors.find((d) => d.display_name === f.doctor_name) || {}).doctor_id || null }));
 let leave = [{ leave_id: 1, staff_id: 4, staff_name: 'Victoria', from_date: '2026-10-18', to_date: '2026-10-20', session_code: null, type_code: 'ON_LEAVE', notes: null }];
 let eqSeq = 0; const equipment = [];
 let catSeq = 5; const catalog = [{ item_id: 1, item_name: 'Endo motor', item_kind: 'MACHINE', requires_ppm: 'Y', ppm_interval_months: 12, list_status: 'STANDARD' }, { item_id: 2, item_name: 'Apex locator', item_kind: 'MACHINE', requires_ppm: 'N', ppm_interval_months: null, list_status: 'STANDARD' }, { item_id: 3, item_name: 'Endo explorer DG16', item_kind: 'INSTRUMENT', list_status: 'STANDARD' }, { item_id: 4, item_name: 'Mouth mirror', item_kind: 'INSTRUMENT', list_status: 'STANDARD' }, { item_id: 5, item_name: 'Buchanan Blue', item_kind: 'INSTRUMENT', list_status: 'STANDARD' }];
@@ -95,7 +97,7 @@ function extraApi(req, res, p, q, body, need) {
       send(res, 200, { date: q.date, draft: drafts[q.date] ? drafts[q.date].draft : null, status: drafts[q.date] ? drafts[q.date].status : null, published_at: null,
         semester: sem ? sem.semester_name : null,
         timetable: sem ? timetable.filter((t) => t.weekday === wdOf(q.date)).map((t) => ({ ...t, doctor_name: D[t.doctor_id].display_name, category_code: D[t.doctor_id].category_code, max_assistants: D[t.doctor_id].max_assistants })) : [],
-        leave, board: current().filter((r) => r.work_date === q.date) });
+        leave, board: current().filter((r) => r.work_date === q.date), fixed: fixedOut() });
       return true;
     }
     if (body.action === 'save_draft') { drafts[body.date] = { draft: body.draft, status: 'DRAFT' }; send(res, 200, { ok: true }); return true; }
@@ -106,6 +108,8 @@ function extraApi(req, res, p, q, body, need) {
       drafts[body.date] = { draft: body.draft, status: 'PUBLISHED' };
       send(res, 200, { ok: true, changes: n, notified: [] }); return true;
     }
+    if (body.action === 'fixed_add') { fixedRows.push({ fixed_id: fixedRows.length + 10, staff_name: ST[body.staff_id].display_name, doctor_name: D[body.doctor_id].display_name }); send(res, 200, { ok: true, fixed: fixedOut() }); return true; }
+    if (body.action === 'fixed_remove') { fixedRows = fixedRows.filter((f) => f.fixed_id !== body.fixed_id); send(res, 200, { ok: true, fixed: fixedOut() }); return true; }
     if (body.action === 'add_leave') { leave.push({ leave_id: leave.length + 2, staff_id: body.staff_id, staff_name: ST[body.staff_id].display_name, from_date: body.from_date, to_date: body.to_date, type_code: body.type_code }); send(res, 200, { ok: true }); return true; }
     if (body.action === 'delete_leave') { leave = leave.filter((l) => l.leave_id !== body.leave_id); send(res, 200, { ok: true }); return true; }
   }

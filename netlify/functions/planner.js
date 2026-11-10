@@ -12,6 +12,18 @@ const { query, one, exec } = require('./lib/db');
 const { writeEntries, assignmentTypes } = require('./lib/assignments');
 const { notifyStaff } = require('./lib/push');
 const { handler, json, parseBody, HttpError, requireCic, isIsoDate, riyadhToday } = require('./lib/http');
+const { ensureSchema } = require('./lib/migrate');
+
+// Fixed assistants: matched by name to active staff and doctors (doctor_id null = name not found).
+async function fixedAssistants() {
+  try {
+    return await query(`
+      SELECT f.fixed_id, f.staff_name, f.doctor_name,
+             (SELECT MIN(s.staff_id) FROM staff s WHERE UPPER(s.display_name) = UPPER(f.staff_name) AND s.employment_status = 'ACTIVE') AS staff_id,
+             (SELECT MIN(d.doctor_id) FROM doctors d WHERE UPPER(d.display_name) = UPPER(f.doctor_name) AND d.is_active = 'Y') AS doctor_id
+        FROM fixed_assistants f ORDER BY f.fixed_id`);
+  } catch (e) { console.error('fixed assistants', e.message); return []; }
+}
 
 const weekdayOf = (iso) => new Date(iso + 'T12:00:00Z').getUTCDay(); // 0 = Sunday
 
@@ -59,12 +71,13 @@ function boardToDraft(rows) {
 exports.handler = handler(['GET', 'POST'], async (event) => {
   const user = requireCic(event);
   const by = `${user.name} (#${user.sid})`;
+  await ensureSchema();
 
   if (event.httpMethod === 'GET') {
     const date = (event.queryStringParameters || {}).date;
     if (!isIsoDate(date)) throw new HttpError(400, 'date must be YYYY-MM-DD.');
     const wd = weekdayOf(date);
-    const [draftRow, timetable, leave, board, semester] = await Promise.all([
+    const [draftRow, timetable, leave, board, semester, fixed] = await Promise.all([
       one(`SELECT draft_json, status, updated_by, TO_CHAR(CAST(updated_at AT TIME ZONE 'Asia/Riyadh' AS DATE), 'YYYY-MM-DD HH24:MI') AS updated_at,
                   TO_CHAR(CAST(published_at AT TIME ZONE 'Asia/Riyadh' AS DATE), 'YYYY-MM-DD HH24:MI') AS published_at
              FROM schedule_drafts WHERE work_date = TO_DATE(:d, 'YYYY-MM-DD')`, { d: date }),
@@ -85,13 +98,14 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
       currentBoard(date),
       one(`SELECT semester_name FROM semesters WHERE confirmed_at IS NOT NULL AND TO_DATE(:d, 'YYYY-MM-DD') BETWEEN starts_on AND ends_on
             ORDER BY starts_on DESC FETCH FIRST 1 ROWS ONLY`, { d: date }),
+      fixedAssistants(),
     ]);
     let draft = null;
     if (draftRow && draftRow.draft_json) { try { draft = typeof draftRow.draft_json === 'string' ? JSON.parse(draftRow.draft_json) : draftRow.draft_json; } catch { draft = null; } }
     return json(200, {
       date, draft, status: draftRow ? draftRow.status : null, updated_at: draftRow ? draftRow.updated_at : null,
       updated_by: draftRow ? draftRow.updated_by : null, published_at: draftRow ? draftRow.published_at : null,
-      semester: semester ? semester.semester_name : null, timetable, leave, board,
+      semester: semester ? semester.semester_name : null, timetable, leave, board, fixed,
     });
   }
 
@@ -106,6 +120,19 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
                 VALUES (:s, TO_DATE(:f, 'YYYY-MM-DD'), TO_DATE(:t, 'YYYY-MM-DD'), :ty, :n, :by); COMMIT; END;`,
     { s: sid, f: b.from_date, t: b.to_date, ty: type, n: b.notes ? String(b.notes).slice(0, 200) : null, by });
     return json(200, { ok: true });
+  }
+  if (b.action === 'fixed_add') {
+    const st = await one(`SELECT display_name FROM staff WHERE staff_id = :id`, { id: Number(b.staff_id) });
+    const dc = await one(`SELECT display_name FROM doctors WHERE doctor_id = :id`, { id: Number(b.doctor_id) });
+    if (!st || !dc) throw new HttpError(400, 'Choose the assistant and the doctor.');
+    try {
+      await exec(`BEGIN INSERT INTO fixed_assistants (staff_name, doctor_name, created_by) VALUES (:s, :d, :by); COMMIT; END;`, { s: st.display_name, d: dc.display_name, by });
+    } catch (e) { if (!/ORA-00001/.test(e.message)) throw e; }
+    return json(200, { ok: true, fixed: await fixedAssistants() });
+  }
+  if (b.action === 'fixed_remove') {
+    await exec(`BEGIN DELETE FROM fixed_assistants WHERE fixed_id = :id; COMMIT; END;`, { id: Number(b.fixed_id) });
+    return json(200, { ok: true, fixed: await fixedAssistants() });
   }
   if (b.action === 'delete_leave') {
     await exec(`BEGIN DELETE FROM staff_leave WHERE leave_id = :id; COMMIT; END;`, { id: Number(b.leave_id) });
