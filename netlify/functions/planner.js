@@ -119,6 +119,11 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
     await exec(`BEGIN INSERT INTO staff_leave (staff_id, from_date, to_date, type_code, notes, entered_by)
                 VALUES (:s, TO_DATE(:f, 'YYYY-MM-DD'), TO_DATE(:t, 'YYYY-MM-DD'), :ty, :n, :by); COMMIT; END;`,
     { s: sid, f: b.from_date, t: b.to_date, ty: type, n: b.notes ? String(b.notes).slice(0, 200) : null, by });
+    // duties already picked for today/tomorrow inside the leave go to the next in line
+    try {
+      const { refreshDuties, announceRefresh } = require('./lib/duties');
+      for (const d of [riyadhToday(), riyadhToday(1)]) if (d >= b.from_date && d <= b.to_date) await announceRefresh(d, await refreshDuties(d, by + ' · leave (duty rotation)'), riyadhToday());
+    } catch (e) { console.error('duty refresh', e.message); }
     return json(200, { ok: true });
   }
   if (b.action === 'fixed_add') {
@@ -206,6 +211,12 @@ exports.handler = handler(['GET', 'POST'], async (event) => {
       WHEN NOT MATCHED THEN INSERT (work_date, draft_json, status, updated_by, published_by, published_at) VALUES (s.work_date, :js, 'PUBLISHED', :by, :by, SYSTIMESTAMP);
       COMMIT;
     END;`, { d: date, js: text, by });
+
+  // Duties already picked for this day whose holder is now on leave / Vitals go to the next in line.
+  try {
+    const { refreshDuties, announceRefresh } = require('./lib/duties');
+    if (date >= riyadhToday()) await announceRefresh(date, await refreshDuties(date, by + ' · planner (duty rotation)'), riyadhToday());
+  } catch (e) { console.error('duty refresh', e.message); }
 
   // A surgery booking added in the planner ("Booking #id" on the row) now counts as assigned.
   try {

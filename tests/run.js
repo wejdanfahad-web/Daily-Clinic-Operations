@@ -591,9 +591,24 @@ function ev(method, { body, query, cookie } = {}) {
     const b = JSON.parse(r.body);
     assert(cancelled, 'her duty row cancelled');
     assert.deepStrictEqual(assigned, [7], 'next free person (Noura holds PM) takes AM');
-    assert.deepStrictEqual(b.handed_over, [{ session: 'AM', from: 'Haifa', to: 'Sara' }]);
+    assert.deepStrictEqual(b.handed_over, [{ duty: 'AM instruments', session: 'AM', from: 'Haifa', to: 'Sara' }]);
     assert(cicTold, 'CIC notified');
     http._setHttpClock(null); push._setClock(null);
+  });
+
+  await t('duties: planned leave and the saved draft (Vitals) are skipped before the day is published', async () => {
+    responder = (sql) => {
+      if (/v_rotation_queue/.test(sql)) return rows([5, 6, 7, 8].map((id, i) => ({ ROTATION_CODE: 'INSTRUMENTS', STAFF_ID: id, STAFF_NAME: ['Haifa', 'Noura', 'Sara', 'Deema'][i], QUEUE_POSITION: i + 1 })));
+      if (/FROM staff_leave/.test(sql)) return rows([{ STAFF_ID: 5, SESSION_CODE: null, TYPE_CODE: 'ON_LEAVE' }]);
+      if (/FROM schedule_drafts/.test(sql)) return rows([{ DRAFT_JSON: JSON.stringify({ 6: { AM: [{ type_code: 'VITALS' }], PM: [] } }) }]);
+      if (/FROM assignment_types/.test(sql)) return rows([{ TYPE_CODE: 'VITALS', CATEGORY: 'DUTY' }]);
+      if (/AS n FROM/.test(sql) || /COUNT/.test(sql)) return rows([{ N: 1 }]);
+      return rows([]);
+    };
+    const { computeDuties } = require('../netlify/functions/lib/duties');
+    const d = await computeDuties('2026-11-18');
+    assert.strictEqual(d.instruments.AM.staff_id, 7, 'Haifa on leave, Noura on Vitals AM -> Sara');
+    assert.strictEqual(d.instruments.PM.staff_id, 6, 'Noura is free in the PM');
   });
 
   await t('vitals check: CIC told at 08:45 when nobody is on AM Vitals; weekends skipped', async () => {

@@ -607,7 +607,7 @@ function editCell(m, sess) {
           session: wholeDay.checked && !dayLabel.hidden ? 'DAY' : sess, staff_id: m.staff.staff_id, type_code: typeSel.value,
           doctor_ids: ids, clinic_id: clinicLabel.hidden ? null : Number(clinicSel.value) || null, notes: notes.value || null }] } });
         const ho = (res && res.handed_over) || [];
-        close(); toast(ho.length ? 'Saved. ' + ho.map((x) => x.to ? `${x.session} instruments moved to ${x.to}.` : `${x.session} instruments: nobody free, please choose.`).join(' ') : 'Saved.');
+        close(); toast(ho.length ? 'Saved. ' + ho.map((x) => x.to ? `${x.duty || x.session + ' instruments'} moved to ${x.to}.` : `${x.duty || x.session + ' instruments'}: nobody free, please choose.`).join(' ') : 'Saved.');
         await refreshBoard();
       } catch (err) { showErr(err.message); save.disabled = false; }
     } }, 'Save');

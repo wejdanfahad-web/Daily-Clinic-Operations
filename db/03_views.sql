@@ -68,7 +68,7 @@ HAVING COUNT(DISTINCT c.clinic_id) >= 2;
 -- -----------------------------------------------------------------------------
 -- Rotation queue for every rotation.
 -- Priority: lowest total count → oldest last date (never = first) → name A–Z
--- Surgery (CIC, Nov 2026) is a true rotation: oldest last surgery (none yet = first) → fewest → A–Z
+-- Surgery, Instruments and Crash cart (CIC, Nov 2026) are true rotations: oldest last turn (none yet = first) → fewest → A–Z
 -- (the A–Z tie-break matches how the current Excel tracker orders ties).
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE VIEW v_rotation_queue AS
@@ -120,7 +120,7 @@ base AS (
 SELECT base.*,
        CASE WHEN is_eligible = 'Y' THEN
          ROW_NUMBER() OVER (PARTITION BY rotation_code, is_eligible
-                            ORDER BY CASE WHEN rotation_code = 'SURGERY' THEN 0 ELSE total_count END ASC,
+                            ORDER BY CASE WHEN rotation_code IN ('SURGERY', 'INSTRUMENTS', 'CRASH_CART') THEN 0 ELSE total_count END ASC,
                                      last_assigned_date ASC NULLS FIRST,
                                      total_count ASC,
                                      UPPER(staff_name) ASC)
