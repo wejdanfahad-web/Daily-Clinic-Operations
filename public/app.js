@@ -91,6 +91,8 @@ const isCic = () => S.me && S.me.role === 'ADMIN' && !S.me.mustChange;
 const isStaff = () => S.me && !S.me.mustChange;
 const canEditDay = () => isCic() || (S.me && S.me.inCharge && S.date === TODAY());
 
+// ?embed=1 : the clean read-only board for a SharePoint page (no header, tabs, sign-in or forms)
+const EMBED = new URLSearchParams(location.search).has('embed');
 const TABS = [
   { id: 'assign', label: 'Daily Assignment', who: 'public' },
   { id: 'planner', label: 'Schedule Planner', who: 'cic' },
@@ -441,10 +443,12 @@ async function renderAssign(app) {
   const side = h('div', { class: 'side' });
   const mainCol = h('div', { class: 'maincol' }, board);
   app.appendChild(h('div', { class: 'daily' }, mainCol, side));
-  if (isCic()) mainCol.appendChild(announceCard());
+  if (EMBED) { /* read-only board */ }
+  else if (isCic()) mainCol.appendChild(announceCard());
   else if (isStaff()) { const a = await myAnnouncementsCard(); if (a) mainCol.appendChild(a); }
 
   side.appendChild(await dutiesCard(date));
+  if (EMBED) return;
   if (isStaff()) side.appendChild(notifyCard());
   side.appendChild(bookSurgeryCard());
   if (isCic()) side.appendChild(await upcomingSurgeriesCard());
@@ -1286,8 +1290,10 @@ $('authBtn').addEventListener('click', async () => {
 window.addEventListener('hashchange', () => { readHash(); S.board = null; render(); });
 
 document.addEventListener('DOMContentLoaded', async function start() {
+  if (EMBED) document.documentElement.classList.add('embed');
   readHash();
-  await loadMe();
+  if (EMBED) S.tab = 'assign';
+  else await loadMe();
   render();
   // refresh the board every 2 minutes while the page is open
   // Refresh the board every 2 minutes, but never while someone is typing (an announcement, a booking…)

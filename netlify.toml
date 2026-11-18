@@ -33,7 +33,8 @@
 [[headers]]
   for = "/*"
   [headers.values]
-    X-Frame-Options        = "DENY"
+    # may be shown inside SharePoint pages only (Embed web part); every other site is still refused
+    Content-Security-Policy = "frame-ancestors 'self' https://*.sharepoint.com"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy        = "strict-origin-when-cross-origin"
 
