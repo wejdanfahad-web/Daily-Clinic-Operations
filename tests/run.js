@@ -611,6 +611,26 @@ function ev(method, { body, query, cookie } = {}) {
     assert.strictEqual(d.instruments.PM.staff_id, 6, 'Noura is free in the PM');
   });
 
+  await t('duty rotation: round robin by last turn; a turn the CIC gave away counts; previews do not repeat names', async () => {
+    const { rotationOrder, pick } = require('../netlify/functions/lib/duties');
+    const q = [
+      { rotation_code: 'INSTRUMENTS', staff_id: 1, staff_name: 'Aisha', total_count: 2, last_date: '2026-11-01' },
+      { rotation_code: 'INSTRUMENTS', staff_id: 2, staff_name: 'Sharifah', total_count: 1, last_date: '2026-11-02' },
+      { rotation_code: 'INSTRUMENTS', staff_id: 3, staff_name: 'Deema', total_count: 9, last_date: '2026-11-10' },
+      { rotation_code: 'INSTRUMENTS', staff_id: 4, staff_name: 'Haifa', total_count: 5, last_date: null },
+    ];
+    // Aisha's and Sharifah's turns were handed to others on 16 and 17 Nov
+    const order = rotationOrder(q, [{ staff_id: 1, type_code: 'INSTRUMENTS', last_date: '2026-11-16' }, { staff_id: 2, type_code: 'INSTRUMENTS', last_date: '2026-11-17' }]);
+    assert.deepStrictEqual(order.map((x) => x.staff_name), ['Haifa', 'Deema', 'Aisha', 'Sharifah']);
+    const today = pick({ queue: order, board: [], cic: null });
+    assert.deepStrictEqual([today.instruments.AM.name, today.instruments.PM.name], ['Haifa', 'Deema']);
+    const next = pick({ queue: order, board: [], cic: null }, [4, 3]);
+    assert.deepStrictEqual([next.instruments.AM.name, next.instruments.PM.name], ['Aisha', 'Sharifah'], 'tomorrow is not a repeat of today');
+    // in charge / surgery are not free for instruments
+    const busy = pick({ queue: order, board: [{ staff_id: 4, session_code: 'AM', type_code: 'IN_CHARGE', category: 'DUTY' }, { staff_id: 3, session_code: 'PM', type_code: 'SURGERY', category: 'CLINICAL' }], cic: null });
+    assert.deepStrictEqual([busy.instruments.AM.name, busy.instruments.PM.name], ['Deema', 'Haifa']);
+  });
+
   await t('vitals check: CIC told at 08:45 when nobody is on AM Vitals; weekends skipped', async () => {
     const push = require('../netlify/functions/lib/push');
     push._setClock(() => new Date('2026-10-20T05:45:00Z')); // Tue 08:45 Riyadh

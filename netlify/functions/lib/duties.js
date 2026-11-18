@@ -13,9 +13,10 @@ const DUTY_TYPES = ['INSTRUMENTS', 'CRASH_CART'];
 
 async function loadDay(date) {
   await require('./migrate').ensureSchema();
-  const [queue, board, cic, extra] = await Promise.all([
+  const [queue, board, cic, extra, passed] = await Promise.all([
     query(`
-      SELECT rotation_code, staff_id, staff_name, total_count, queue_position
+      SELECT rotation_code, staff_id, staff_name, total_count, queue_position,
+             TO_CHAR(last_assigned_date, 'YYYY-MM-DD') AS last_date
         FROM v_rotation_queue
        WHERE rotation_code IN ('INSTRUMENTS', 'CRASH_CART') AND is_eligible = 'Y'
        ORDER BY rotation_code, queue_position`),
@@ -24,8 +25,29 @@ async function loadDay(date) {
         FROM v_assignments_current WHERE work_date = TO_DATE(:d, 'YYYY-MM-DD')`, { d: date }),
     query(`SELECT staff_id, display_name FROM staff WHERE app_role = 'ADMIN' AND employment_status = 'ACTIVE' ORDER BY staff_id FETCH FIRST 1 ROWS ONLY`),
     plannedRows(date),
+    // a turn the CIC handed to someone else still counts as that person's turn
+    query(`
+      SELECT staff_id, type_code, TO_CHAR(MAX(work_date), 'YYYY-MM-DD') AS last_date
+        FROM assignment_logs
+       WHERE action = 'CANCEL' AND type_code IN ('INSTRUMENTS', 'CRASH_CART')
+         AND (notes IS NULL OR notes = 'replaced by CIC')
+       GROUP BY staff_id, type_code`).catch(() => []),
   ]);
-  return { queue, board: [...board, ...extra(board)], cic: cic[0] || null };
+  return { queue: rotationOrder(queue, passed), board: [...board, ...extra(board)], cic: cic[0] || null };
+}
+
+// Round-robin order, worked out here so it never depends on the view: whoever had the duty (or was
+// passed over by the CIC) longest ago goes first; never = first; fewer turns, then A-Z, break ties.
+function rotationOrder(queue, passed) {
+  const p = new Map((Array.isArray(passed) ? passed : []).map((r) => [r.type_code + ':' + Number(r.staff_id), r.last_date]));
+  const last = (q) => { const a = q.last_date || null, b = p.get(q.rotation_code + ':' + Number(q.staff_id)) || null; return a && b ? (a > b ? a : b) : a || b; };
+  return [...(Array.isArray(queue) ? queue : [])].sort((x, y) => {
+    if (x.rotation_code !== y.rotation_code) return x.rotation_code < y.rotation_code ? -1 : 1;
+    const lx = last(x), ly = last(y);
+    if (lx !== ly) { if (!lx) return -1; if (!ly) return 1; return lx < ly ? -1 : 1; }
+    if (Number(x.total_count) !== Number(y.total_count)) return Number(x.total_count) - Number(y.total_count);
+    return String(x.staff_name).localeCompare(String(y.staff_name));
+  });
 }
 
 // Planned leave, and the saved draft while the day is not published yet, as extra board-like rows
@@ -40,6 +62,8 @@ async function plannedRows(date) {
       query(`SELECT type_code, category FROM assignment_types`),
     ]);
   } catch (e) { console.error('duties planned rows', e.message); }
+  if (!Array.isArray(leave)) leave = [];
+  if (!Array.isArray(types)) types = [];
   const cat = Object.fromEntries(types.map((t) => [t.type_code, t.category]));
   return (board) => {
     const rows = leave.map((l) => ({ staff_id: Number(l.staff_id), session_code: l.session_code || 'DAY', type_code: l.type_code, category: 'UNAVAILABLE', planned: true }));
@@ -62,8 +86,11 @@ async function plannedRows(date) {
 
 const inSession = (r, sess) => r.session_code === sess || r.session_code === 'DAY';
 
-function pick({ queue, board, cic }) {
-  const unavailable = (sid, sess) => board.some((r) => Number(r.staff_id) === Number(sid) && r.category === 'UNAVAILABLE' && inSession(r, sess));
+function pick({ queue, board, cic }, prior = []) {
+  if (prior.length) { const back = new Set(prior.map(Number)); queue = [...queue.filter((q) => !back.has(Number(q.staff_id))), ...queue.filter((q) => back.has(Number(q.staff_id)))]; }
+  // not free for a duty: leave / sick leave / excuse, or in charge of the clinic (and, for instruments, in surgery)
+  const unavailable = (sid, sess, inst) => board.some((r) => Number(r.staff_id) === Number(sid) && inSession(r, sess)
+    && (r.category === 'UNAVAILABLE' || r.type_code === 'IN_CHARGE' || (inst && r.type_code === 'SURGERY')));
   const onVitals = (sid, sess) => board.some((r) => Number(r.staff_id) === Number(sid) && r.type_code === 'VITALS' && inSession(r, sess));
   const recorded = (type, sess) => board.filter((r) => r.log_id && r.type_code === type && (!sess || inSession(r, sess)));
   const skipped = [];
@@ -74,14 +101,14 @@ function pick({ queue, board, cic }) {
   const taken = new Set();
   for (const sess of ['AM', 'PM']) {
     const rec = recorded('INSTRUMENTS', sess)[0];
-    if (rec) { out.instruments[sess] = { staff_id: Number(rec.staff_id), name: rec.staff_name, recorded: true, log_id: rec.log_id, nowUnavailable: unavailable(rec.staff_id, sess), nowVitals: onVitals(rec.staff_id, sess) }; taken.add(Number(rec.staff_id)); continue; }
+    if (rec) { out.instruments[sess] = { staff_id: Number(rec.staff_id), name: rec.staff_name, recorded: true, log_id: rec.log_id, nowUnavailable: unavailable(rec.staff_id, sess, true), nowVitals: onVitals(rec.staff_id, sess) }; taken.add(Number(rec.staff_id)); continue; }
   }
   for (const sess of ['AM', 'PM']) {
     if (out.instruments[sess]) continue;
     for (const q of inst) {
       const sid = Number(q.staff_id);
       if (taken.has(sid)) continue;
-      if (unavailable(sid, sess)) { skipped.push({ duty: `Instruments ${sess}`, name: q.staff_name, why: 'not available' }); continue; }
+      if (unavailable(sid, sess, true)) { skipped.push({ duty: `Instruments ${sess}`, name: q.staff_name, why: 'not available' }); continue; }
       if (onVitals(sid, sess)) { skipped.push({ duty: `Instruments ${sess}`, name: q.staff_name, why: 'on Vitals' }); continue; }
       out.instruments[sess] = { staff_id: sid, name: q.staff_name, recorded: false };
       taken.add(sid);
@@ -105,8 +132,10 @@ function pick({ queue, board, cic }) {
   return out;
 }
 
-async function computeDuties(date) {
-  return pick(await loadDay(date));
+// prior = staff picked (not yet recorded) on an earlier day: they go to the back, so a preview of
+// tomorrow does not repeat today's names.
+async function computeDuties(date, prior = []) {
+  return pick(await loadDay(date), prior);
 }
 
 // Write the picks that are not recorded yet. Returns the rows written.
@@ -205,4 +234,4 @@ async function announceRefresh(date, changes, today) {
   }
 }
 
-module.exports = { computeDuties, recordDuties, refreshDuties, announceRefresh, handOverDuties, pick, DUTY_TYPES };
+module.exports = { computeDuties, recordDuties, refreshDuties, announceRefresh, handOverDuties, pick, rotationOrder, DUTY_TYPES };
