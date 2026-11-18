@@ -631,6 +631,17 @@ function ev(method, { body, query, cookie } = {}) {
     assert.deepStrictEqual([busy.instruments.AM.name, busy.instruments.PM.name], ['Deema', 'Haifa']);
   });
 
+  await t('speed: a cold start with every schema step on record makes ONE schema query', async () => {
+    const m = require('../netlify/functions/lib/migrate');
+    const ids = [...require('fs').readFileSync(require('path').join(__dirname, '../netlify/functions/lib/migrate.js'), 'utf8').matchAll(/    id: '([^']+)'/g)].map((x) => x[1]);
+    m._reset();
+    responder = (sql) => /FROM schema_steps/.test(sql) ? rows(ids.map((id) => ({ STEP_ID: id, STATUS: 'DONE', DAY: '2026-11-18' }))) : rows([]);
+    calls.length = 0;
+    await m.ensureSchema();
+    assert.strictEqual(calls.length, 1, 'one round trip, not one per step');
+    m._reset();
+  });
+
   await t('vitals check: CIC told at 08:45 when nobody is on AM Vitals; weekends skipped', async () => {
     const push = require('../netlify/functions/lib/push');
     push._setClock(() => new Date('2026-10-20T05:45:00Z')); // Tue 08:45 Riyadh

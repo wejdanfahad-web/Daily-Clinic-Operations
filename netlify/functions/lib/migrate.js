@@ -1,7 +1,7 @@
 // Small, idempotent schema changes applied automatically by the API, so the CIC never has to
 // run SQL for them. Each step checks whether it is already done before changing anything.
 // Runs at most once per function instance (cold start).
-const { one, exec } = require('./db');
+const { query, one, exec } = require('./db');
 
 const STEPS = [
   {
@@ -575,19 +575,54 @@ END;`,
   },
 ];
 
+// Speed (Nov 2026): every cold start used to run each step's check one after another (~25 database
+// round trips, 5-8 s). Now the steps already applied are kept in SCHEMA_STEPS and read in ONE query;
+// only new steps are checked (in parallel) and applied in order. A failed optional step is retried
+// at most once a day instead of on every start.
 let ready = null;
+async function appliedSteps() {
+  try {
+    return await query(`SELECT step_id, status, TO_CHAR(attempted_at, 'YYYY-MM-DD') AS day FROM schema_steps`);
+  } catch (e) {
+    if (!/ORA-00942/.test(e.message)) throw e;
+    try {
+      await exec(`BEGIN EXECUTE IMMEDIATE 'CREATE TABLE schema_steps (step_id VARCHAR2(60) PRIMARY KEY, status VARCHAR2(10) NOT NULL, attempted_at DATE DEFAULT SYSDATE NOT NULL, message VARCHAR2(400))'; END;`);
+    } catch (e2) { if (!/ORA-00955/.test(e2.message)) throw e2; }
+    return [];
+  }
+}
+async function mark(id, status, message) {
+  try {
+    await exec(`
+      BEGIN
+        UPDATE schema_steps SET status = :st, attempted_at = SYSDATE, message = :m WHERE step_id = :id;
+        IF SQL%ROWCOUNT = 0 THEN INSERT INTO schema_steps (step_id, status, message) VALUES (:id, :st, :m); END IF;
+        COMMIT;
+      END;`, { id, st: status, m: message ? String(message).slice(0, 400) : null });
+  } catch (e) { console.error('schema mark', id, e.message); }
+}
 function ensureSchema() {
   if (!ready) {
     ready = (async () => {
-      for (const s of STEPS) {
-        const r = await one(s.done);
-        if (!r || Number(r.n) === 0) {
-          try { await exec(s.run); console.log('schema step applied:', s.id); }
-          catch (e) {
-            if (/ORA-01430/.test(e.message)) continue;                 // already added by a parallel instance
-            if (s.optional) { console.error('schema step skipped:', s.id, e.message); continue; }
-            throw e;
-          }
+      const rows = await appliedSteps();
+      const today = new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
+      const known = new Map((Array.isArray(rows) ? rows : []).map((r) => [r.step_id, r]));
+      const todo = STEPS.filter((s) => {
+        const k = known.get(s.id);
+        if (!k) return true;
+        return k.status === 'FAILED' && k.day !== today;   // retry a failed optional step once a day
+      });
+      if (!todo.length) return;
+      const checks = await Promise.all(todo.map((s) => one(s.done).catch(() => null)));
+      for (let i = 0; i < todo.length; i++) {
+        const s = todo[i];
+        const r = checks[i];
+        if (r && Number(r.n) > 0) { await mark(s.id, 'DONE'); continue; }
+        try { await exec(s.run); console.log('schema step applied:', s.id); await mark(s.id, 'DONE'); }
+        catch (e) {
+          if (/ORA-01430/.test(e.message)) { await mark(s.id, 'DONE'); continue; }   // already added by a parallel instance
+          if (s.optional) { console.error('schema step skipped:', s.id, e.message); await mark(s.id, 'FAILED', e.message); continue; }
+          throw e;
         }
       }
     })().catch((e) => { ready = null; throw e; });
