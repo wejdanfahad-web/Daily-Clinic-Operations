@@ -25,6 +25,7 @@ const rows = (items) => ({ items: [{ resultSet: { items } }] });
 const done = (n = 1) => ({ items: [{ result: n }] });
 const oraErr = (text) => ({ items: [{ errorCode: 20031, errorDetails: text }] });
 
+require('../netlify/functions/lib/migrate')._setWait(1e9); // tests wait for schema steps to finish
 let passed = 0, failed = 0;
 async function t(name, fn) {
   calls.length = 0;

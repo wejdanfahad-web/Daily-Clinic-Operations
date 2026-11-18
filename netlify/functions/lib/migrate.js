@@ -593,17 +593,38 @@ async function appliedSteps() {
 }
 async function mark(id, status, message) {
   try {
+    // each bind used once (a repeated named bind inside a PL/SQL block is not reliable over ORDS)
     await exec(`
       BEGIN
-        UPDATE schema_steps SET status = :st, attempted_at = SYSDATE, message = :m WHERE step_id = :id;
-        IF SQL%ROWCOUNT = 0 THEN INSERT INTO schema_steps (step_id, status, message) VALUES (:id, :st, :m); END IF;
-        COMMIT;
-      END;`, { id, st: status, m: message ? String(message).slice(0, 400) : null });
+      MERGE INTO schema_steps t
+      USING (SELECT :id AS step_id, :st AS status, :m AS message FROM dual) s
+         ON (t.step_id = s.step_id)
+       WHEN MATCHED THEN UPDATE SET t.status = s.status, t.attempted_at = SYSDATE, t.message = s.message
+       WHEN NOT MATCHED THEN INSERT (step_id, status, message) VALUES (s.step_id, s.status, s.message);
+      COMMIT;
+      END;`,
+      { id, st: status, m: message ? String(message).slice(0, 400) : null });
   } catch (e) { console.error('schema mark', id, e.message); }
 }
+
 // Never lets a schema problem take pages down (18 Nov 2026 outage): any failure is logged and the
-// pages run on the schema as it is. Checks run one after another (the database rejected them in parallel).
+// pages run on the schema as it is. A page waits for at most ~1.5 s of schema work; anything longer
+// carries on in the background and is picked up again on the next start.
 const ALREADY = /ORA-00955|ORA-01430|ORA-02260|ORA-02261|ORA-02275|ORA-01442|ORA-00001|ORA-01408/;
+async function runSteps(todo) {
+  for (const s of todo) {
+    let r;
+    try { r = await one(s.done); }
+    catch (e) { console.error('schema check failed (left for later):', s.id, e.message); continue; }  // never run a step blind
+    if (r && Number(r.n) > 0) { await mark(s.id, 'DONE'); continue; }
+    try { await exec(s.run); console.log('schema step applied:', s.id); await mark(s.id, 'DONE'); }
+    catch (e) {
+      if (ALREADY.test(e.message)) { await mark(s.id, 'DONE'); continue; }
+      console.error('schema step failed:', s.id, e.message); await mark(s.id, 'FAILED', e.message);
+    }
+  }
+}
+let waitMs = 1500;
 function ensureSchema() {
   if (!ready) {
     ready = (async () => {
@@ -616,20 +637,12 @@ function ensureSchema() {
         if (!k) return true;
         return k.status === 'FAILED' && k.day !== today;   // retry a failed step once a day
       });
-      for (const s of todo) {
-        let r;
-        try { r = await one(s.done); }
-        catch (e) { console.error('schema check failed (left for later):', s.id, e.message); continue; }  // never run a step blind
-        if (r && Number(r.n) > 0) { await mark(s.id, 'DONE'); continue; }
-        try { await exec(s.run); console.log('schema step applied:', s.id); await mark(s.id, 'DONE'); }
-        catch (e) {
-          if (ALREADY.test(e.message)) { await mark(s.id, 'DONE'); continue; }
-          console.error('schema step failed:', s.id, e.message); await mark(s.id, 'FAILED', e.message);
-        }
-      }
+      if (!todo.length) return;
+      const work = runSteps(todo).catch((e) => console.error('schema steps', e.message));
+      await Promise.race([work, new Promise((r) => setTimeout(r, waitMs))]);
     })().catch((e) => { console.error('ensureSchema', e.message); });
   }
   return ready;
 }
 
-module.exports = { ensureSchema, _reset: () => { ready = null; } };
+module.exports = { ensureSchema, _reset: () => { ready = null; }, _setWait: (ms) => { waitMs = ms; } };
