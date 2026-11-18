@@ -601,31 +601,33 @@ async function mark(id, status, message) {
       END;`, { id, st: status, m: message ? String(message).slice(0, 400) : null });
   } catch (e) { console.error('schema mark', id, e.message); }
 }
+// Never lets a schema problem take pages down (18 Nov 2026 outage): any failure is logged and the
+// pages run on the schema as it is. Checks run one after another (the database rejected them in parallel).
+const ALREADY = /ORA-00955|ORA-01430|ORA-02260|ORA-02261|ORA-02275|ORA-01442|ORA-00001|ORA-01408/;
 function ensureSchema() {
   if (!ready) {
     ready = (async () => {
-      const rows = await appliedSteps();
+      let rows = [];
+      try { rows = await appliedSteps(); } catch (e) { console.error('schema steps table', e.message); }
       const today = new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
       const known = new Map((Array.isArray(rows) ? rows : []).map((r) => [r.step_id, r]));
       const todo = STEPS.filter((s) => {
         const k = known.get(s.id);
         if (!k) return true;
-        return k.status === 'FAILED' && k.day !== today;   // retry a failed optional step once a day
+        return k.status === 'FAILED' && k.day !== today;   // retry a failed step once a day
       });
-      if (!todo.length) return;
-      const checks = await Promise.all(todo.map((s) => one(s.done).catch(() => null)));
-      for (let i = 0; i < todo.length; i++) {
-        const s = todo[i];
-        const r = checks[i];
+      for (const s of todo) {
+        let r;
+        try { r = await one(s.done); }
+        catch (e) { console.error('schema check failed (left for later):', s.id, e.message); continue; }  // never run a step blind
         if (r && Number(r.n) > 0) { await mark(s.id, 'DONE'); continue; }
         try { await exec(s.run); console.log('schema step applied:', s.id); await mark(s.id, 'DONE'); }
         catch (e) {
-          if (/ORA-01430/.test(e.message)) { await mark(s.id, 'DONE'); continue; }   // already added by a parallel instance
-          if (s.optional) { console.error('schema step skipped:', s.id, e.message); await mark(s.id, 'FAILED', e.message); continue; }
-          throw e;
+          if (ALREADY.test(e.message)) { await mark(s.id, 'DONE'); continue; }
+          console.error('schema step failed:', s.id, e.message); await mark(s.id, 'FAILED', e.message);
         }
       }
-    })().catch((e) => { ready = null; throw e; });
+    })().catch((e) => { console.error('ensureSchema', e.message); });
   }
   return ready;
 }
