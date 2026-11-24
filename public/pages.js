@@ -219,13 +219,14 @@ function plannerChecks() {
   for (const sess of ['AM', 'PM']) {
     const docUse = new Map();       // doctor → staff ids
     const clinicUse = new Map();    // clinic → staff ids (clinical)
-    let vitals = 0;
+    let vitals = 0, screening = 0;
     for (const s of S.ref.staff) {
       const cell = (draft[s.staff_id] && draft[s.staff_id][sess]) || [];
       if (!cell.length && s.employment_status === 'ACTIVE') issues.push({ sev: 'low', text: `${s.display_name} has nothing in the ${sess}.` });
       const clinDocs = [];
       for (const e of cell) {
         if (e.type_code === 'VITALS') vitals++;
+        if (e.type_code === 'SCREENING') screening++;
         const t = types[e.type_code];
         for (const d of e.doctor_ids || []) {
           if (!docUse.has(d)) docUse.set(d, new Set());
@@ -241,6 +242,8 @@ function plannerChecks() {
       if (clinDocs.length > 3) issues.push({ sev: 'high', text: `${s.display_name} (${sess}) has more than 3 doctors.` });
     }
     if (!vitals) issues.push({ sev: 'high', text: `Nobody is on Vitals in the ${sess} (every session needs one).` });
+    // Screening: every session needs one, unless more than 18 clinics are in use
+    if (!screening && clinicUse.size <= 18) issues.push({ sev: 'high', text: `Nobody is on Screening in the ${sess} (needed unless more than 18 clinics are in use; ${clinicUse.size} in use).` });
     for (const [d, set] of docUse) {
       const doc = docs[d];
       if (doc && set.size > Number(doc.max_assistants || 1)) issues.push({ sev: 'high', text: `${doc.display_name} has ${set.size} assistants in the ${sess} (allowed: ${doc.max_assistants}).` });
@@ -503,7 +506,7 @@ PAGES.planner = async function renderPlanner(app) {
   const high = issues.filter((i) => i.sev === 'high'), low = issues.filter((i) => i.sev === 'low');
   const checks = cardSection('Checks');
   if (!P.draft) checks.appendChild(h('div', { class: 'note' }, 'Checks appear once there is a draft.'));
-  else if (!issues.length) checks.appendChild(h('div', { class: 'msg ok' }, 'All good: every timetable doctor has an assistant, Vitals is covered and nobody is double-booked.'));
+  else if (!issues.length) checks.appendChild(h('div', { class: 'msg ok' }, 'All good: every timetable doctor has an assistant, Vitals and Screening are covered and nobody is double-booked.'));
   else {
     const ul = h('ul', { class: 'plain' });
     for (const i of high) {

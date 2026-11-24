@@ -646,9 +646,10 @@ function ev(method, { body, query, cookie } = {}) {
   await t('vitals check: CIC told at 08:45 when nobody is on AM Vitals; weekends skipped', async () => {
     const push = require('../netlify/functions/lib/push');
     push._setClock(() => new Date('2026-10-20T05:45:00Z')); // Tue 08:45 Riyadh
-    let n = 0, cicTold = false, sess = null;
+    let n = 0, cicTold = false, sess = null, scr = 1, clin = 12;
     responder = (sql, b) => {
       if (/type_code = 'VITALS'/.test(sql)) { sess = b.s; return rows([{ N: n }]); }
+      if (/type_code = 'SCREENING'/.test(sql)) return rows([{ SCREENING: scr, CLINICS: clin }]);
       if (/app_role = 'ADMIN'/.test(sql)) { cicTold = true; return rows([{ STAFF_ID: 99 }]); }
       if (/COUNT/.test(sql)) return rows([{ N: 0 }]);
       return /^\s*(BEGIN|DECLARE)/.test(sql) ? done() : rows([]);
@@ -658,6 +659,13 @@ function ev(method, { body, query, cookie } = {}) {
     n = 1; cicTold = false;
     r = JSON.parse((await F('vitals-check-pm')({})).body);
     assert.strictEqual(sess, 'PM'); assert.strictEqual(r.vitals, 1); assert(!cicTold, 'Vitals set: nothing sent');
+    // Screening: needed with 18 clinics or fewer, not needed above 18
+    scr = 0; clin = 18; cicTold = false;
+    r = JSON.parse((await F('vitals-check-pm')({})).body);
+    assert(cicTold, 'no Screening with 18 clinics: CIC told');
+    clin = 19; cicTold = false;
+    r = JSON.parse((await F('vitals-check-pm')({})).body);
+    assert(!cicTold, '19 clinics in use: Screening not needed');
     push._setClock(() => new Date('2026-10-23T05:45:00Z')); // Friday
     sess = null;
     r = JSON.parse((await F('vitals-check-am')({})).body);
